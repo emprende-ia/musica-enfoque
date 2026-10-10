@@ -2,7 +2,7 @@
  * Sincronización opcional con Firebase (inicio de sesión con Google + Firestore).
  *
  * Datos en la nube, por persona:
- *   users/{uid}               → { settings, settingsUpdatedAt }
+ *   users/{uid}               → { settings, settingsUpdatedAt, presence }
  *   users/{uid}/days/{día}    → { day, minutes, sessions: { [inicio]: { s, z, m, c } } }
  *
  * Sin configuración (firebase-config.js en null) la app funciona solo con este navegador.
@@ -124,6 +124,7 @@ export class Sync {
         F.onSnapshot(userRef, (d) => {
           const data = d.exists() ? d.data() : {};
           this.hooks.onRemoteSettings?.(data.settings || null, data.settingsUpdatedAt || 0);
+          this.hooks.onRemotePresence?.(data.presence || null);
         }, (e) => this.#status('error', explain(e))),
       );
       const from = new Date();
@@ -148,6 +149,18 @@ export class Sync {
     for (const k of SYNCED_SETTINGS) if (settings[k] !== undefined) data[k] = settings[k];
     try {
       await F.setDoc(this.#ref(), { settings: data, settingsUpdatedAt: updatedAt, updatedAt: F.serverTimestamp() }, { merge: true });
+      this.#status('synced');
+    } catch (e) {
+      this.#status('error', explain(e));
+    }
+  }
+
+  /** Presencia compartida: comenzar o dejar de estar presente se refleja en todos los dispositivos. */
+  async pushPresence(presence) {
+    if (!this.user) return;
+    const { F } = this.fb;
+    try {
+      await F.setDoc(this.#ref(), { presence, updatedAt: F.serverTimestamp() }, { merge: true });
       this.#status('synced');
     } catch (e) {
       this.#status('error', explain(e));

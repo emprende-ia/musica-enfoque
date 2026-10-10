@@ -6,6 +6,7 @@ import * as store from './store.js';
 import { Sync, syncConfigured } from './sync.js';
 import { mergeSessions, toRemoteMap, fromRemote } from './merge.js';
 import { initInstall, registerServiceWorker } from './install.js';
+import { toPresence, reconcile, soundHere } from './presence.js';
 
 const { MIN, HOUR } = S;
 const COMPLETE_MS = 45 * MIN; // una sesión cuenta como completa con 45 min o más de enfoque
@@ -59,6 +60,37 @@ let dialHourKey = '';
 let todayWasDone = null;
 
 audio.setAlarmVolume(settings.alarm / 100);
+
+/* Identificador de este dispositivo y hora del último cambio de presencia (para sincronizar) */
+const DEVICE_ID = (() => {
+  try {
+    let id = localStorage.getItem('mye.device');
+    if (!id) {
+      id = Math.random().toString(36).slice(2, 10);
+      localStorage.setItem('mye.device', id);
+    }
+    return id;
+  } catch {
+    return 'este';
+  }
+})();
+// Versión del último cambio de presencia aplicado aquí: { v, by }
+let presenceVer = (() => {
+  try {
+    const p = JSON.parse(localStorage.getItem('mye.presenceVer') || 'null');
+    return p && typeof p.v === 'number' ? p : { v: 0, by: '' };
+  } catch {
+    return { v: 0, by: '' };
+  }
+})();
+function setPresenceVer(v, by) {
+  presenceVer = { v, by };
+  try {
+    localStorage.setItem('mye.presenceVer', JSON.stringify(presenceVer));
+  } catch {
+    /* nada */
+  }
+}
 
 /* ---------- tema ---------- */
 const THEME_META = {
@@ -338,12 +370,17 @@ function markLive(mode) {
 
 function routeAudio(b, musicDelayMs = 0) {
   const mode = S.modeOf(b.type);
-  const quiet = !run || run.quiet || !mode;
+  const elsewhere = !!run && !isSoundHere();
+  const quiet = !run || run.quiet || !mode || elsewhere;
   clearTimeout(musicTimer);
   clearTimeout(blockedTimer);
   for (const m of MODES) if (m !== mode || quiet) players[m].fadeOutPause(1500);
   if (quiet) {
     if (!previewTimer) audio.silence();
+    if (elsewhere) {
+      audio.cancelAlarms();
+      alarmArmedFor = null;
+    }
     markLive(null);
     return;
   }
@@ -367,7 +404,7 @@ function routeAudio(b, musicDelayMs = 0) {
 function onEnter(b, live) {
   current = b;
   if (live && b.type !== 'waiting') {
-    if (alarmArmedFor !== b.start) audio.playAlarm(ALARM_FOR[b.type]);
+    if (alarmArmedFor !== b.start && isSoundHere()) audio.playAlarm(ALARM_FOR[b.type]);
     notify(b);
   }
   alarmArmedFor = null;
@@ -377,7 +414,7 @@ function onEnter(b, live) {
 }
 
 function armAlarm(b, now) {
-  if (audioPending || !audio.running) return;
+  if (audioPending || !audio.running || !isSoundHere()) return;
   if (b.end - now > 15_000 || alarmArmedFor === b.end) return;
   const nb = S.blockAt(b.end);
   if (audio.scheduleAlarm(ALARM_FOR[nb.type], b.end)) alarmArmedFor = b.end;
@@ -424,8 +461,9 @@ function start(waitUntil = null) {
   audio.unlock();
   audioPending = false;
   $('#resume-banner').hidden = true;
-  run = { startedAt: Date.now(), waitUntil, quiet: $('#quiet').checked, current: null };
+  run = { startedAt: Date.now(), waitUntil, quiet: $('#quiet').checked, soundDevice: DEVICE_ID, current: null };
   store.saveRun(run);
+  pushPresence();
   lastKey = null;
   alarmArmedFor = null;
   if (!waitUntil && S.blockAt(Date.now()).type === 'focus') audio.playAlarm('focus');
@@ -462,7 +500,12 @@ function currentBlock(now) {
   return S.blockAt(now);
 }
 
-function stop() {
+/** Deja de estar presente. `remoteAt`: llegó de otro dispositivo (no se vuelve a subir). */
+function stop(remoteAt = null) {
+  if (remoteAt && run?.current) {
+    // No contar el tiempo después de que el otro dispositivo dejó de estar presente
+    run.current.focusedMs = Math.min(run.current.focusedMs, Math.max(0, remoteAt - run.current.start));
+  }
   finalize();
   run = null;
   current = null;
@@ -480,6 +523,7 @@ function stop() {
   $('#blocked-banner').hidden = true;
   updateWakeLock();
   dialHourKey = '';
+  if (!remoteAt) pushPresence();
   tick();
 }
 
@@ -643,6 +687,7 @@ function renderClock(now) {
 
 function renderIdle(now) {
   document.body.dataset.mode = 'idle';
+  $('#sound-elsewhere').hidden = true;
   const opt = S.startOptions(now);
   const b = opt.block;
 
@@ -679,6 +724,7 @@ function renderRun(b, now) {
   document.body.dataset.mode = b.type;
   $('#idle-controls').hidden = true;
   $('#run-controls').hidden = false;
+  $('#sound-elsewhere').hidden = isSoundHere();
 
   const label = blockLabel(b);
   const left = mmss(b.end - now);
@@ -997,6 +1043,74 @@ async function updateWakeLock() {
   }
 }
 
+/* ---------- presencia compartida entre dispositivos ---------- */
+const isSoundHere = () => soundHere(run, DEVICE_ID, sync.signedIn);
+
+function pushPresence() {
+  setPresenceVer(presenceVer.v + 1, DEVICE_ID);
+  if (sync.signedIn) sync.pushPresence(toPresence(run, presenceVer.v, DEVICE_ID));
+}
+
+/** Ajusta lo que depende de en qué dispositivo suena (avisos y audio). */
+function refreshSoundRole() {
+  const here = isSoundHere();
+  $('#sound-elsewhere').hidden = !run || here;
+  if (run && !here) {
+    audioPending = false;
+    $('#resume-banner').hidden = true;
+    $('#blocked-banner').hidden = true;
+  }
+  if (current && !audioPending) routeAudio(current, 0);
+}
+
+function onRemotePresence(p) {
+  const action = reconcile(run, presenceVer, p);
+  if (action === 'ignore') return;
+  if (action === 'push') {
+    // Lo de aquí gana (o nunca se subió): se sube tal cual
+    if (!presenceVer.v) setPresenceVer((p?.v || 0) + 1, DEVICE_ID);
+    if (sync.signedIn) sync.pushPresence(toPresence(run, presenceVer.v, presenceVer.by));
+    return;
+  }
+  setPresenceVer(p.v, p.by);
+  if (action === 'stop') {
+    stop(p.updatedAt);
+    showSnackbar(`${icon('stop_circle')}Dejaste de estar presente desde otro dispositivo.`);
+    return;
+  }
+  const fresh = action === 'start';
+  if (fresh) {
+    run = { startedAt: p.startedAt, waitUntil: p.waitUntil, quiet: p.quiet, soundDevice: p.soundDevice, current: null };
+    lastKey = null;
+    alarmArmedFor = null;
+    // Si el sonido es para este dispositivo pero aún no hubo un toque, el navegador pide uno
+    audioPending = p.soundDevice === DEVICE_ID && !audio.running;
+    $('#resume-banner').hidden = !audioPending;
+  } else {
+    run.startedAt = p.startedAt;
+    run.waitUntil = p.waitUntil;
+    run.quiet = p.quiet;
+    run.soundDevice = p.soundDevice;
+  }
+  $('#quiet').checked = !!run.quiet;
+  store.saveRun(run);
+  tick();
+  refreshSoundRole();
+  if (fresh) showSnackbar(`${icon('self_improvement')}Estás presente desde otro dispositivo.`);
+}
+
+/** "Sonar aquí": pasa la música, los binaurales y las alarmas a este dispositivo. */
+function soundHereNow() {
+  if (!run) return;
+  audio.unlock();
+  audioPending = false;
+  run.soundDevice = DEVICE_ID;
+  store.saveRun(run);
+  pushPresence();
+  refreshSoundRole();
+  primePlayers();
+}
+
 /* ---------- sincronización entre dispositivos ---------- */
 let pushSettingsTimer = null;
 let lastSyncAt = 0;
@@ -1142,9 +1256,11 @@ const sync = new Sync({
   onUser: (user) => {
     syncUser = user;
     renderSync();
+    refreshSoundRole();
   },
   onRemoteSettings,
   onRemoteDays,
+  onRemotePresence,
 });
 
 function wireSync() {
@@ -1204,10 +1320,12 @@ function wireGlobal() {
     if (!run) return;
     run.quiet = quiet.checked;
     store.saveRun(run);
+    pushPresence();
     if (current && !audioPending) routeAudio(current, 0);
   });
 
   $('#btn-resume').addEventListener('click', resumeAudio);
+  $('#btn-sound-here').addEventListener('click', soundHereNow);
   // Cualquier toque o tecla devuelve el sonido (tras recargar, el navegador exige una interacción)
   const onGesture = (e) => {
     audio.unlock();
@@ -1307,6 +1425,7 @@ function init() {
     // Formato anterior (ciclo contado desde que se iniciaba): se conserva como presencia activa
     if (run.startedAt == null) run = { startedAt: run.anchor ?? Date.now(), waitUntil: null, quiet: !!run.quiet, current: null };
     if (run.waitUntil && Date.now() >= run.waitUntil) run.waitUntil = null;
+    if (!run.soundDevice) run.soundDevice = DEVICE_ID; // presencia de antes: suena en este dispositivo
     store.saveRun(run);
     // Cerrar un enfoque guardado que ya terminó mientras la pestaña estaba cerrada
     const b = S.blockAt(Date.now());

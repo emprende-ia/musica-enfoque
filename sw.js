@@ -1,7 +1,7 @@
 // Service worker: permite instalar la app y abrirla sin conexión.
 // Estrategia "primero la red": con internet siempre carga la versión más nueva;
 // sin internet usa la última copia guardada. YouTube y Firebase siempre van a la red.
-const CACHE = 'mye-v1';
+const CACHE = 'mye-v2';
 const CORE = [
   './',
   'index.html',
@@ -17,6 +17,7 @@ const CORE = [
   'js/merge.js',
   'js/sync.js',
   'js/install.js',
+  'js/presence.js',
   'js/firebase-config.js',
   'js/tick-worker.js',
   'icons/icon.svg',

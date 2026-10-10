@@ -68,7 +68,9 @@ La app instalada abre aunque no tengas conexión: el service worker (`sw.js`) gu
 En **Ajustes → Sincronización**, o con el ícono de cuenta de la barra superior, inicias sesión con Google. Desde ese momento la app guarda en tu cuenta de Firebase tus ajustes, playlists, historial y racha, y los mantiene iguales en la computadora y en el celular.
 
 - **Qué se sincroniza:** ajustes de enfoque y recuperación (playlists, volúmenes, binaurales), volumen de alarmas, tema, sesiones y minutos por día.
-- **Qué no:** los permisos de notificaciones y de pantalla encendida, y el estado de "estar presente" de cada dispositivo.
+- **Presencia en tiempo real:** comenzar o dejar de estar presente, "Solo alarmas" y "Esperar al enfoque" se reflejan en todos tus dispositivos en segundos.
+- **El sonido, en un solo dispositivo:** suena donde comenzaste a estar presente. En los demás ves el reloj y se cuenta el tiempo en silencio; con **Sonar aquí** pasas la música y las alarmas a ese dispositivo.
+- **Qué no se sincroniza:** los permisos de notificaciones y de pantalla encendida.
 - **Sin duplicados:** cada sesión se identifica por la hora en que empezó su enfoque. Si el mismo bloque quedó registrado en dos dispositivos, cuenta una vez, con el registro de más minutos.
 - **Sin conexión:** todo se guarda en el navegador y se sube al volver a conectarte.
 
@@ -172,6 +174,7 @@ js/youtube.js         Reproductor de playlists (YouTube IFrame API)
 js/store.js           Ajustes, presencia, historial y minutos por día
 js/sync.js            Sincronización con Firebase (Google + Firestore)
 js/merge.js           Unión de sesiones entre dispositivos (con pruebas)
+js/presence.js        Presencia compartida y dispositivo con sonido (con pruebas)
 js/firebase-config.js Configuración del proyecto de Firebase
 js/tick-worker.js     Reloj en segundo plano
 js/app.js             Interfaz y flujo del ciclo
