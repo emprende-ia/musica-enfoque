@@ -55,6 +55,14 @@ Mientras estás presente, el sonido cambia solo: a los :50 suenan la alarma, la 
 
 La racha se calcula con los minutos de enfoque de cada día, que se guardan aparte del historial detallado, así no se pierde aunque el historial se recorte.
 
+## Instalar como app
+
+- **Android (Chrome, Edge, Samsung Internet):** al abrir la página aparece un aviso con el botón **Instalar**. Si todavía no aparece, abre el menú ⋮ del navegador y toca **Instalar app**.
+- **iPhone y iPad (Safari, o Chrome desde iOS 16.4):** toca **Compartir** y luego **Agregar a inicio**. En iPhone, la app instalada guarda sus datos aparte de Safari, así que inicia sesión dentro de la app para sincronizar.
+- **Computadora:** en Chrome o Edge, usa el ícono de instalar de la barra de direcciones. También está en **Ajustes → App en tu celular**.
+
+La app instalada abre aunque no tengas conexión: el service worker (`sw.js`) guarda una copia y, con internet, siempre carga la versión más nueva. La música de YouTube y la sincronización sí necesitan conexión.
+
 ## Sincronización entre dispositivos
 
 En **Ajustes → Sincronización**, o con el ícono de cuenta de la barra superior, inicias sesión con Google. Desde ese momento la app guarda en tu cuenta de Firebase tus ajustes, playlists, historial y racha, y los mantiene iguales en la computadora y en el celular.
@@ -170,6 +178,9 @@ js/app.js             Interfaz y flujo del ciclo
 tests/                Pruebas del horario y de las rachas
 tools/                Generador de colores
 icons/                Ícono de la app (cronómetro rojo): SVG, PNG para instalar como app y favicon
+screenshots/          Capturas que muestra el aviso de instalación
+sw.js                 Service worker (instalar y abrir sin conexión)
+js/install.js         Aviso para instalar la app
 ```
 
 Tus ajustes, historial y racha se guardan en tu navegador y, si inicias sesión, también en tu cuenta.

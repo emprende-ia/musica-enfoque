@@ -5,6 +5,7 @@ import { computeStreak, keyOf, dateOf, GOAL_MIN, MAX_SHIELDS } from './streak.js
 import * as store from './store.js';
 import { Sync, syncConfigured } from './sync.js';
 import { mergeSessions, toRemoteMap, fromRemote } from './merge.js';
+import { initInstall, registerServiceWorker } from './install.js';
 
 const { MIN, HOUR } = S;
 const COMPLETE_MS = 45 * MIN; // una sesión cuenta como completa con 45 min o más de enfoque
@@ -1317,6 +1318,8 @@ function init() {
   tick();
   startTicker();
   wireSync();
+  initInstall({ icon, onInstalled: () => showSnackbar(`${icon('install_mobile')}Listo: ya tienes Música & Enfoque como app.`) });
+  registerServiceWorker();
 }
 
 init();

@@ -160,6 +160,61 @@ select { font: inherit; color: inherit; }
 .chip-shields { display: inline-flex; gap: 1px; margin-left: 2px; }
 .chip-shields .ms { font-size: 18px; color: var(--md-sys-color-tertiary); }
 
+/* ---------- instalar la app ---------- */
+.install-banner,
+.install-card {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  grid-template-areas: "icon text" "actions actions";
+  gap: 8px 16px;
+  align-items: center;
+}
+
+.install-banner {
+  max-width: 1232px;
+  margin: 0 auto 12px;
+  padding: 16px 16px 8px 20px;
+  border-radius: var(--shape-xl);
+  background: var(--md-sys-color-primary-container);
+  color: var(--md-sys-color-on-primary-container);
+}
+
+.install-card {
+  grid-template-areas: "icon text" "icon actions";
+  max-width: 640px;
+  padding: 16px 20px;
+  border-radius: var(--shape-xl);
+  background: var(--md-sys-color-surface-container);
+}
+
+.install-icon { grid-area: icon; width: 48px; height: 48px; border-radius: 14px; }
+.install-text { grid-area: text; min-width: 0; }
+.install-title { margin: 0; font-weight: 600; }
+
+.install-detail {
+  margin: 2px 0 0;
+  font-size: 0.875rem;
+  line-height: 1.375rem;
+  opacity: 0.9;
+}
+
+.install-detail .ms { font-size: 18px; vertical-align: -4px; }
+.install-detail:empty { display: none; }
+
+.install-actions {
+  grid-area: actions;
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.install-banner .btn.text { color: var(--md-sys-color-on-primary-container); }
+.install-card #btn-install-2 { grid-area: actions; justify-self: start; margin-top: 4px; }
+
+@media (max-width: 900px) {
+  .install-banner { margin: 0 16px 12px; }
+}
+
 /* ---------- distribución ---------- */
 .layout {
   display: grid;

@@ -20,11 +20,15 @@
   <link rel="icon" href="icons/favicon-16.png" sizes="16x16" type="image/png">
   <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
   <meta name="apple-mobile-web-app-title" content="Enfoque">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta name="application-name" content="Música & Enfoque">
   <link rel="manifest" href="manifest.webmanifest">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Google+Sans+Flex:opsz,wght,ROND@6..144,1..1000,0..100&display=swap">
-  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Rounded:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200&icon_names=account_circle,alarm,arrow_drop_down,brightness_auto,check,close,cloud_done,cloud_off,dark_mode,delete,graphic_eq,headphones,light_mode,local_fire_department,login,logout,pause,play_arrow,queue_music,restaurant,schedule,self_improvement,shield,skip_next,skip_previous,spa,stop_circle,timer,volume_up&display=block">
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Rounded:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200&icon_names=account_circle,add_box,alarm,arrow_drop_down,brightness_auto,check,close,cloud_done,cloud_off,dark_mode,delete,graphic_eq,headphones,install_mobile,ios_share,light_mode,local_fire_department,login,logout,more_vert,pause,play_arrow,queue_music,restaurant,schedule,self_improvement,shield,skip_next,skip_previous,spa,stop_circle,timer,volume_up&display=block">
   <link rel="stylesheet" href="css/tokens.css">
   <link rel="stylesheet" href="css/styles.css">
   <script type="module" src="js/app.js"></script>
@@ -50,6 +54,20 @@
       </button>
     </div>
   </header>
+
+  <section id="install-banner" class="install-banner" aria-label="Instalar la app" hidden>
+    <img class="install-icon" src="icons/icon-192.png" alt="" width="48" height="48">
+    <div class="install-text">
+      <p class="install-title">Instala Música & Enfoque en tu celular</p>
+      <p class="install-detail" id="install-detail"></p>
+    </div>
+    <div class="install-actions">
+      <button type="button" id="btn-install-later" class="btn text"><span class="label">Ahora no</span></button>
+      <button type="button" id="btn-install" class="btn filled" hidden>
+        <span class="ms" aria-hidden="true">install_mobile</span><span class="label">Instalar</span>
+      </button>
+    </div>
+  </section>
 
   <main class="layout">
     <section class="pane stage" aria-label="Bloque actual">
@@ -167,6 +185,18 @@
               <span class="ms" aria-hidden="true">logout</span><span class="label">Cerrar sesión</span>
             </button>
           </div>
+        </div>
+
+        <h3 class="subhead" id="h-install">App en tu celular</h3>
+        <div class="install-card">
+          <img class="install-icon" src="icons/icon-192.png" alt="" width="48" height="48">
+          <div class="install-text">
+            <p class="install-title">Música & Enfoque como app</p>
+            <p class="install-detail" id="install-status"></p>
+          </div>
+          <button type="button" id="btn-install-2" class="btn tonal" hidden>
+            <span class="ms" aria-hidden="true">install_mobile</span><span class="label">Instalar app</span>
+          </button>
         </div>
 
         <h3 class="subhead">Tema</h3>
