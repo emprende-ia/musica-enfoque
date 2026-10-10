@@ -1,90 +1,98 @@
 // Pruebas del horario. Ejecuta: npm test  (o: node --test tests/*.test.js)
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { blockAt, blocksIn, upcoming, startOptions, MIN, HOUR, RULES } from '../js/schedule.js';
+import { blockAt, blocksBetween, startOptions, dayHours, LONG_HOURS, MIN, HOUR, RULES } from '../js/schedule.js';
 
-const at = (h, m = 0, s = 0) => new Date(2026, 9, 12, h, m, s).getTime(); // lunes 12 oct 2026, hora local
-const ANCHOR = at(8);
+const at = (d, h, m = 0, s = 0) => new Date(2026, 9, d, h, m, s).getTime(); // octubre 2026, hora local
+const D = 12;
 
-function expectBlock(t, type, session, start, end) {
-  const b = blockAt(ANCHOR, t);
-  assert.equal(b.type, type, `tipo en ${new Date(t).toTimeString()}`);
-  if (session != null) assert.equal(b.session, session, 'sesión');
-  if (start != null) assert.equal(b.start, start, 'inicio');
-  if (end != null) assert.equal(b.end, end, 'fin');
+function expectBlock(t, type, start, end, extra = {}) {
+  const b = blockAt(t);
+  const when = new Date(t).toTimeString().slice(0, 8);
+  assert.equal(b.type, type, `tipo a las ${when}`);
+  if (start != null) assert.equal(b.start, start, `inicio a las ${when}`);
+  if (end != null) assert.equal(b.end, end, `fin a las ${when}`);
+  for (const [k, v] of Object.entries(extra)) assert.equal(b[k], v, `${k} a las ${when}`);
 }
 
-test('ciclo 1: enfoque en punto, recuperación a los :50', () => {
-  expectBlock(at(8, 0), 'focus', 1, at(8, 0), at(8, 50));
-  expectBlock(at(8, 49, 59), 'focus', 1);
-  expectBlock(at(8, 50), 'break', 1, at(8, 50), at(9, 0));
-  expectBlock(at(9, 0), 'focus', 2, at(9, 0), at(9, 50));
-  expectBlock(at(9, 50), 'break', 2, at(9, 50), at(10, 0));
-  expectBlock(at(10, 0), 'focus', 3);
-  expectBlock(at(10, 50), 'break', 3);
-  expectBlock(at(11, 0), 'focus', 4, at(11, 0), at(11, 50));
-});
-
-test('recuperación larga de 11:50 a 13:00 (70 min, sin margen)', () => {
-  expectBlock(at(11, 50), 'long', 4, at(11, 50), at(13, 0));
-  expectBlock(at(12, 0), 'long', 4);
-  expectBlock(at(12, 40), 'long', 4);
-  expectBlock(at(12, 59, 59), 'long', 4);
-  const b = blockAt(ANCHOR, at(12, 30));
+test('la recuperación larga coincide con la comida: 13:50 a 15:00', () => {
+  expectBlock(at(D, 13, 50), 'long', at(D, 13, 50), at(D, 15), { lunch: true });
+  expectBlock(at(D, 14, 0), 'long', at(D, 13, 50), at(D, 15), { lunch: true });
+  expectBlock(at(D, 14, 59, 59), 'long', at(D, 13, 50), at(D, 15));
+  const b = blockAt(at(D, 14, 30));
   assert.equal((b.end - b.start) / MIN, RULES.longBreakMin);
+  expectBlock(at(D, 15, 0), 'focus', at(D, 15), at(D, 15, 50), { sessionInCycle: 1, cycleName: 'Tarde' });
 });
 
-test('ciclo 2 empieza a las 13:00 con la sesión 5', () => {
-  const b = blockAt(ANCHOR, at(13, 0));
-  assert.equal(b.type, 'focus');
-  assert.equal(b.session, 5);
-  assert.equal(b.sessionInCycle, 1);
-  assert.equal(b.cycle, 2);
-  expectBlock(at(16, 0), 'focus', 8);
-  expectBlock(at(16, 50), 'long', 8, at(16, 50), at(18, 0));
-  expectBlock(at(18, 0), 'focus', 9);
+test('mediodía: 4 sesiones de 10:00 a 13:50', () => {
+  for (let h = 10; h <= 13; h++) {
+    expectBlock(at(D, h, 0), 'focus', at(D, h), at(D, h, 50), { sessionInCycle: h - 9, cycleSize: 4, cycleName: 'Mediodía' });
+  }
+  expectBlock(at(D, 10, 50), 'break', at(D, 10, 50), at(D, 11));
+  expectBlock(at(D, 12, 50), 'break', at(D, 12, 50), at(D, 13));
+  expectBlock(at(D, 13, 49, 59), 'focus');
 });
 
-test('antes del ancla se espera', () => {
-  const b = blockAt(ANCHOR, at(7, 55));
-  assert.equal(b.type, 'waiting');
-  assert.equal(b.end, ANCHOR);
+test('recuperaciones largas del día: 3:50, 8:50, 13:50, 18:50 y 23:50', () => {
+  const longs = blocksBetween(at(D, 0), at(D + 1, 0)).filter((b) => b.type === 'long');
+  const starts = longs.map((b) => new Date(b.start)).map((d) => `${d.getHours()}:${String(d.getMinutes()).padStart(2, '0')}`);
+  assert.deepEqual(starts, ['23:50', '3:50', '8:50', '13:50', '18:50', '23:50']); // la primera viene del día anterior
+  assert.deepEqual([...LONG_HOURS].sort((a, b) => a - b), [0, 4, 9, 14, 19]);
 });
 
-test('en 24 h todo enfoque empieza a :00 y todo descanso a :50', () => {
-  const blocks = blocksIn(ANCHOR, ANCHOR, ANCHOR + 24 * HOUR);
-  assert.ok(blocks.length > 0);
+test('la recuperación de medianoche cruza de día', () => {
+  expectBlock(at(D, 23, 55), 'long', at(D, 23, 50), at(D + 1, 1));
+  expectBlock(at(D + 1, 0, 30), 'long', at(D, 23, 50), at(D + 1, 1));
+  expectBlock(at(D + 1, 1, 0), 'focus', null, null, { sessionInCycle: 1, cycleSize: 3, cycleName: 'Madrugada' });
+});
+
+test('19 sesiones al día; solo la madrugada tiene 3', () => {
+  const focus = blocksBetween(at(D, 0), at(D + 1, 0)).filter((b) => b.type === 'focus');
+  assert.equal(focus.length, 19);
+  const sizes = {};
+  for (const b of focus) sizes[b.cycleName] = b.cycleSize;
+  assert.deepEqual(sizes, { Madrugada: 3, Mañana: 4, Mediodía: 4, Tarde: 4, Noche: 4 });
+});
+
+test('en 3 días todo enfoque empieza a :00, todo descanso a :50 y no hay huecos', () => {
+  const blocks = blocksBetween(at(D, 0), at(D + 3, 0));
   for (const b of blocks) {
-    const d = new Date(b.start);
+    const s = new Date(b.start);
+    const e = new Date(b.end);
     if (b.type === 'focus') {
-      assert.equal(d.getMinutes(), 0);
+      assert.equal(s.getMinutes(), 0);
       assert.equal((b.end - b.start) / MIN, 50);
     } else {
-      assert.equal(d.getMinutes(), 50);
-      assert.equal(new Date(b.end).getMinutes(), 0, 'todo descanso termina en punto');
+      assert.equal(s.getMinutes(), 50);
+      assert.equal(e.getMinutes(), 0);
+      assert.equal((b.end - b.start) / MIN, b.type === 'long' ? 70 : 10);
     }
   }
-  // bloques contiguos, sin huecos
   for (let i = 1; i < blocks.length; i++) assert.equal(blocks[i].start, blocks[i - 1].end);
 });
 
-test('8:00 a 18:00 = 8 sesiones', () => {
-  const focus = blocksIn(ANCHOR, ANCHOR, at(18)).filter((b) => b.type === 'focus');
-  assert.equal(focus.length, 8);
+test('opciones al iniciar', () => {
+  assert.equal(startOptions(at(D, 10, 0, 20)).kind, 'now');
+  const c = startOptions(at(D, 10, 23));
+  assert.equal(c.kind, 'choose');
+  assert.equal(c.focusLeftMs, 27 * MIN);
+  assert.equal(c.nextFocus, at(D, 11));
+  const c4 = startOptions(at(D, 13, 23));
+  assert.equal(c4.nextFocus, at(D, 15), 'tras la sesión 4 el siguiente enfoque es a las 15:00');
+  const r = startOptions(at(D, 14, 10));
+  assert.equal(r.kind, 'recovery');
+  assert.equal(r.nextFocus, at(D, 15));
+  assert.equal(startOptions(at(D, 10, 52)).nextFocus, at(D, 11));
 });
 
-test('opciones al iniciar a mitad de hora', () => {
-  assert.deepEqual(startOptions(at(8, 0, 20)), { kind: 'now', anchor: at(8) });
-  const o = startOptions(at(8, 23));
-  assert.equal(o.kind, 'choose');
-  assert.equal(o.joinAnchor, at(8));
-  assert.equal(o.nextAnchor, at(9));
-  assert.equal(o.focusLeftMs, 27 * MIN);
-  assert.deepEqual(startOptions(at(8, 52)), { kind: 'wait', anchor: at(9) });
-});
-
-test('upcoming devuelve el bloque actual y los siguientes', () => {
-  const list = upcoming(ANCHOR, at(11, 20), 4);
-  assert.deepEqual(list.map((b) => b.type), ['focus', 'long', 'focus', 'break']);
-  assert.equal(list[2].start, at(13));
+test('dayHours describe las 24 horas', () => {
+  const hours = dayHours(at(D, 9));
+  assert.equal(hours.length, 24);
+  assert.equal(hours[14].role, 'long');
+  assert.equal(hours[14].lunch, true);
+  assert.equal(hours[13].endsInLong, true);
+  assert.equal(hours[12].endsInLong, false);
+  assert.equal(hours[0].role, 'long');
+  assert.equal(hours[23].endsInLong, true);
+  assert.equal(hours[23].end - hours[23].start, HOUR);
 });

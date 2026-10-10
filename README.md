@@ -2,36 +2,42 @@
 
 App web para trabajar en sesiones fijas al reloj, con tu música de YouTube Music y tonos binaurales para cada momento. Funciona como sitio estático en GitHub Pages: no necesita servidor ni cuenta.
 
-## Reglas del horario (fijas)
+## Horario fijo de 24 horas
+
+Es el mismo todos los días y no se puede cambiar desde la app.
 
 - **Enfoque:** 50 min. Siempre empieza a la hora en punto (:00).
 - **Recuperación:** 10 min. Siempre empieza a los :50.
 - **Sesión:** 1 hora.
-- **Cada 4 sesiones, recuperación larga:** empieza a los :50 de la sesión 4 y termina en la hora en punto siguiente a la próxima (70 min). La sesión 5 empieza en punto.
+- **Cada 4 sesiones, recuperación larga de 70 min:** empieza a los :50 de la última sesión y termina en punto.
+- **La comida es a las 14:00:** la recuperación larga de 13:50 a 15:00 la cubre. Las demás quedan cada 5 horas a partir de ahí.
 
-Un ciclo ocupa 5 horas de reloj. Ejemplo empezando a las 8:00:
+| Hora | Bloque |
+|---|---|
+| 0:00 – 1:00 | Recuperación larga (empezó a las 23:50) |
+| 1:00, 2:00, 3:00 | Madrugada: 3 sesiones |
+| 3:50 – 5:00 | Recuperación larga |
+| 5:00, 6:00, 7:00, 8:00 | Mañana: 4 sesiones |
+| 8:50 – 10:00 | Recuperación larga |
+| 10:00, 11:00, 12:00, 13:00 | Mediodía: 4 sesiones |
+| 13:50 – 15:00 | Recuperación larga: comida |
+| 15:00, 16:00, 17:00, 18:00 | Tarde: 4 sesiones |
+| 18:50 – 20:00 | Recuperación larga |
+| 20:00, 21:00, 22:00, 23:00 | Noche: 4 sesiones |
+| 23:50 – 1:00 | Recuperación larga |
 
-| Hora | Bloque | Duración |
-|---|---|---|
-| 8:00 – 8:50 | Enfoque, sesión 1 | 50 min |
-| 8:50 – 9:00 | Recuperación | 10 min |
-| 9:00 – 9:50 | Enfoque, sesión 2 | 50 min |
-| 9:50 – 10:00 | Recuperación | 10 min |
-| 10:00 – 10:50 | Enfoque, sesión 3 | 50 min |
-| 10:50 – 11:00 | Recuperación | 10 min |
-| 11:00 – 11:50 | Enfoque, sesión 4 | 50 min |
-| 11:50 – 13:00 | Recuperación larga | 70 min |
-| 13:00 | Enfoque, sesión 5 (ciclo 2) | |
+Las 24 horas no se dividen exacto en ciclos de 5 horas, así que la madrugada es el único bloque de 3 sesiones. En total son 19 sesiones al día.
 
-**Si inicias a mitad de hora:** antes de los :50 puedes unirte a la sesión en curso con el tiempo que queda, o esperar a la siguiente hora en punto. De :50 a :59 la primera sesión empieza en la siguiente hora en punto.
+**Estar presente:** la app sigue el reloj todo el tiempo. "Comenzar a estar presente" activa la música, los binaurales, las alarmas y el registro en el bloque que toca. Si el enfoque ya empezó, puedes entrar con el tiempo que queda o esperar al siguiente enfoque. "Dejar de estar presente" lo apaga todo y guarda el tiempo ya contado.
 
 ## Qué incluye
 
 - Dial de la hora actual: enfoque y recuperación marcados en el reloj, con el avance en vivo.
+- Las 24 horas del día en una lista, con la hora actual marcada.
 - Una playlist de YouTube Music para enfoque y otra para recuperación. Cada una sigue donde se quedó al volver a su bloque.
 - Tono binaural y ruido marrón por modo, con varias frecuencias.
 - Alarmas distintas: enfoque (campanas ascendentes), recuperación (descendentes) y recuperación larga (gong).
-- Opción "Solo alarmas" para iniciar sin música ni binaurales.
+- Opción "Solo alarmas" para estar presente sin música ni binaurales.
 - Registro: minutos de enfoque de hoy, sesiones completas (45 min o más) y los últimos 7 días.
 - Notificaciones opcionales y opción para mantener la pantalla encendida.
 
@@ -76,7 +82,7 @@ Sirven enlaces como `music.youtube.com/playlist?list=…`, `youtube.com/playlist
 ## Para que las alarmas suenen a tiempo
 
 - Deja la pestaña abierta. Puede estar en segundo plano: el reloj corre en un worker y las alarmas se programan en el motor de audio.
-- Los navegadores exigen un toque antes de reproducir sonido. Por eso, si recargas la página con un ciclo en marcha, aparece **Activar sonido**.
+- Los navegadores exigen un toque antes de reproducir sonido. Por eso, si recargas la página mientras estás presente, aparece **Activar sonido**.
 - En iPhone y iPad, Safari pausa el audio con la pantalla bloqueada. Usa "Mantener la pantalla encendida".
 
 ## Binaurales

@@ -48,7 +48,7 @@ export const saveSettings = (s) => write(KEYS.settings, s);
 
 export function loadRun() {
   const r = read(KEYS.run, null);
-  return r && typeof r.anchor === 'number' ? r : null;
+  return r && (typeof r.startedAt === 'number' || typeof r.anchor === 'number') ? r : null;
 }
 
 export const saveRun = (r) => write(KEYS.run, r);

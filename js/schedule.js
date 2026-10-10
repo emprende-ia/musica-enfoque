@@ -1,14 +1,16 @@
 /**
- * Reglas del horario. Son fijas: la interfaz no permite cambiarlas.
+ * Horario fijo de 24 horas. Es igual todos los días y no se puede cambiar
+ * desde la interfaz.
  *
  *  - Enfoque: 50 min. Siempre empieza a la hora en punto (:00).
  *  - Recuperación: 10 min. Siempre empieza a los :50.
- *  - Sesión = 1 hora (enfoque + recuperación).
- *  - Cada 4 sesiones, recuperación larga: empieza a los :50 de la sesión 4
- *    y termina en la hora en punto que sigue a la siguiente (70 min).
- *    Ej.: 11:50 → 13:00. La sesión 5 empieza a las 13:00.
- *
- * Un ciclo completo ocupa 5 horas de reloj.
+ *  - Sesión = 1 hora.
+ *  - Cada 4 sesiones, recuperación larga de 70 min: empieza a los :50 de la
+ *    última sesión y termina en punto dos horas después.
+ *  - La comida es a las 14:00, así que una recuperación larga es 13:50–15:00.
+ *    Las demás quedan cada 5 horas a partir de ahí: 3:50, 8:50, 18:50 y 23:50.
+ *  - Como 24 h no se dividen en ciclos de 5 h, la madrugada (1:00–3:50) es
+ *    el único ciclo de 3 sesiones.
  */
 export const MIN = 60_000;
 export const HOUR = 60 * MIN;
@@ -19,10 +21,8 @@ export const RULES = Object.freeze({
   sessionsPerCycle: 4,
   longBreakMin: 70,
   cycleHours: 5,
+  lunchHour: 14,
 });
-
-const FOCUS_MS = RULES.focusMin * MIN;
-const CYCLE_MS = RULES.cycleHours * HOUR;
 
 export const LABELS = Object.freeze({
   focus: 'Enfoque',
@@ -30,6 +30,48 @@ export const LABELS = Object.freeze({
   long: 'Recuperación larga',
   waiting: 'En espera',
 });
+
+const CYCLE_NAMES = { 1: 'Madrugada', 5: 'Mañana', 10: 'Mediodía', 15: 'Tarde', 20: 'Noche' };
+
+/** Horas del reloj ocupadas por una recuperación larga (empieza a los :50 de la hora anterior). */
+export const LONG_HOURS = (() => {
+  const set = new Set();
+  for (let h = RULES.lunchHour; h <= 24; h += RULES.cycleHours) set.add(h % 24);
+  for (let h = RULES.lunchHour - RULES.cycleHours; h >= 0; h -= RULES.cycleHours) set.add(h);
+  return set;
+})();
+
+/** Plan de cada hora del día: sesión (con su lugar en el ciclo) u hora de recuperación larga. */
+export const PLAN = (() => {
+  const plan = new Array(24);
+  let runStart = null;
+  const closeRun = (end) => {
+    if (runStart == null) return;
+    const size = end - runStart;
+    const name = CYCLE_NAMES[runStart] || 'Ciclo';
+    for (let h = runStart; h < end; h++) {
+      plan[h] = { role: 'session', sessionInCycle: h - runStart + 1, cycleSize: size, cycleName: name };
+    }
+    runStart = null;
+  };
+  for (let h = 0; h < 24; h++) {
+    if (LONG_HOURS.has(h)) closeRun(h);
+    else if (runStart == null) runStart = h;
+  }
+  closeRun(24);
+  // Cada hora larga pertenece al ciclo que la precede (la de las 0:00, al de la noche).
+  for (const L of LONG_HOURS) {
+    const prev = plan[(L + 23) % 24];
+    plan[L] = {
+      role: 'long',
+      sessionInCycle: prev.cycleSize,
+      cycleSize: prev.cycleSize,
+      cycleName: prev.cycleName,
+      lunch: L === RULES.lunchHour,
+    };
+  }
+  return Object.freeze(plan);
+})();
 
 /** focus → 'focus'; break/long → 'recovery'; waiting → null */
 export function modeOf(type) {
@@ -45,77 +87,78 @@ export function startOfHour(t) {
   return d.getTime();
 }
 
+/** Medianoche local del día de `t`. */
+export function startOfDay(t) {
+  const d = new Date(t);
+  d.setHours(0, 0, 0, 0);
+  return d.getTime();
+}
+
+function onDay(t, hour, minute = 0) {
+  const d = new Date(t);
+  return new Date(d.getFullYear(), d.getMonth(), d.getDate(), hour, minute).getTime();
+}
+
+function meta(p) {
+  return { sessionInCycle: p.sessionInCycle, cycleSize: p.cycleSize, cycleName: p.cycleName, lunch: !!p.lunch };
+}
+
+/** Bloque del horario vigente en el instante `t`. */
+export function blockAt(t) {
+  const d = new Date(t);
+  const h = d.getHours();
+  const p = PLAN[h];
+  if (p.role === 'long') {
+    return { type: 'long', start: onDay(t, h - 1, 50), end: onDay(t, h + 1), ...meta(p) };
+  }
+  if (d.getMinutes() < RULES.focusMin) {
+    return { type: 'focus', start: onDay(t, h), end: onDay(t, h, RULES.focusMin), ...meta(p) };
+  }
+  const next = PLAN[(h + 1) % 24];
+  if (next.role === 'long') {
+    return { type: 'long', start: onDay(t, h, 50), end: onDay(t, h + 2), ...meta(next) };
+  }
+  return { type: 'break', start: onDay(t, h, 50), end: onDay(t, h + 1), ...meta(p) };
+}
+
+/** El bloque que sigue a `b`. */
+export const nextBlock = (b) => blockAt(b.end);
+
+/** Bloques que se cruzan con [from, to), en orden. */
+export function blocksBetween(from, to) {
+  const out = [];
+  let t = from;
+  while (t < to) {
+    const b = blockAt(t);
+    out.push(b);
+    t = b.end;
+  }
+  return out;
+}
+
 /**
- * Qué ofrecer cuando se presiona "iniciar" en el instante `now`.
- *  - 'now'    → primer minuto de la hora: empieza ya.
- *  - 'choose' → antes de los :50: unirse a la sesión en curso o esperar.
- *  - 'wait'   → de :50 a :59: la primera sesión es en la siguiente hora.
- * El ancla es la hora en punto en la que arranca la Sesión 1 del ciclo.
+ * Qué ofrecer al presionar "iniciar" en el instante `now`.
+ *  - 'now'      → primer minuto de un enfoque: empieza ya.
+ *  - 'choose'   → enfoque ya empezado: unirse o esperar al siguiente enfoque.
+ *  - 'recovery' → en recuperación: se entra en ella y el enfoque sigue a su fin.
  */
 export function startOptions(now) {
-  const top = startOfHour(now);
-  const into = now - top;
-  if (into < MIN) return { kind: 'now', anchor: top };
-  if (into < FOCUS_MS) {
-    return { kind: 'choose', joinAnchor: top, nextAnchor: top + HOUR, focusLeftMs: FOCUS_MS - into };
+  const b = blockAt(now);
+  if (b.type === 'focus') {
+    if (now - b.start < MIN) return { kind: 'now', block: b };
+    return { kind: 'choose', block: b, focusLeftMs: b.end - now, nextFocus: nextBlock(b).end };
   }
-  return { kind: 'wait', anchor: top + HOUR };
+  return { kind: 'recovery', block: b, nextFocus: b.end };
 }
 
-/** Los 8 bloques del ciclo `k` (0, 1, 2…) contados desde el ancla. */
-export function blocksOfCycle(anchor, k) {
-  const cycleStart = anchor + k * CYCLE_MS;
+/** Las 24 horas del día de `t`, con lo que ocurre en cada una. */
+export function dayHours(t) {
   const out = [];
-  for (let i = 0; i < RULES.sessionsPerCycle; i++) {
-    const h = cycleStart + i * HOUR;
-    const base = {
-      cycle: k + 1,
-      session: k * RULES.sessionsPerCycle + i + 1,
-      sessionInCycle: i + 1,
-    };
-    out.push({ ...base, type: 'focus', start: h, end: h + FOCUS_MS });
-    const last = i === RULES.sessionsPerCycle - 1;
-    out.push({
-      ...base,
-      type: last ? 'long' : 'break',
-      start: h + FOCUS_MS,
-      end: last ? cycleStart + CYCLE_MS : h + HOUR,
-    });
-  }
-  return out;
-}
-
-/** Bloque vigente en el instante `t`. Antes del ancla: 'waiting'. */
-export function blockAt(anchor, t) {
-  if (t < anchor) {
-    return { type: 'waiting', start: null, end: anchor, cycle: 1, session: 1, sessionInCycle: 1 };
-  }
-  const k = Math.floor((t - anchor) / CYCLE_MS);
-  return blocksOfCycle(anchor, k).find((b) => t >= b.start && t < b.end);
-}
-
-/** El bloque actual (o el primero, si aún se espera) y los siguientes; `count` en total. */
-export function upcoming(anchor, t, count) {
-  const out = [];
-  let k = t < anchor ? 0 : Math.floor((t - anchor) / CYCLE_MS);
-  while (out.length < count) {
-    for (const b of blocksOfCycle(anchor, k)) {
-      if (b.end > t && out.length < count) out.push(b);
-    }
-    k++;
-  }
-  return out;
-}
-
-/** Bloques que se cruzan con el intervalo [from, to). */
-export function blocksIn(anchor, from, to) {
-  const out = [];
-  let k = Math.max(0, Math.floor((from - anchor) / CYCLE_MS));
-  for (;;) {
-    const blocks = blocksOfCycle(anchor, k);
-    if (blocks[0].start >= to) break;
-    for (const b of blocks) if (b.end > from && b.start < to) out.push(b);
-    k++;
+  for (let h = 0; h < 24; h++) {
+    const p = PLAN[h];
+    const start = onDay(t, h);
+    const nextIsLong = PLAN[(h + 1) % 24].role === 'long';
+    out.push({ hour: h, start, end: onDay(t, h + 1), ...p, endsInLong: p.role === 'session' && nextIsLong });
   }
   return out;
 }

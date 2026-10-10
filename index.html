@@ -53,7 +53,7 @@
           </div>
         </div>
         <div id="run-controls" class="btn-row" hidden>
-          <button type="button" id="btn-stop" class="btn">Detener ciclo</button>
+          <button type="button" id="btn-stop" class="btn">Dejar de estar presente</button>
         </div>
         <label class="switch">
           <input type="checkbox" id="quiet">
@@ -62,7 +62,7 @@
       </div>
 
       <div id="resume-banner" class="banner" hidden>
-        <p>Tu ciclo sigue en marcha. El navegador necesita un toque para volver a sonar.</p>
+        <p>Sigues presente. El navegador necesita un toque para volver a sonar.</p>
         <button type="button" id="btn-resume" class="btn primary">Activar sonido</button>
       </div>
       <div id="blocked-banner" class="banner" hidden>
@@ -72,17 +72,16 @@
     </section>
 
     <div class="panels">
-      <section class="panel" aria-labelledby="h-schedule">
-        <h2 id="h-schedule">Horario</h2>
-        <p class="lede">Cada enfoque empieza a la hora en punto y cada recuperación a los :50. Después de la sesión 4, la recuperación larga dura 70 minutos y termina en punto.</p>
-        <p id="schedule-note" class="schedule-note"></p>
-        <ol id="schedule" class="schedule"></ol>
-      </section>
-
       <section class="panel" aria-labelledby="h-audio">
         <h2 id="h-audio">Música y binaurales</h2>
         <p class="lede">Pega el enlace de una playlist de YouTube Music para cada momento. La recuperación larga usa la música de recuperación. Para los binaurales usa audífonos.</p>
         <div id="modes" class="modes"></div>
+      </section>
+
+      <section class="panel" aria-labelledby="h-schedule">
+        <h2 id="h-schedule">Las 24 horas</h2>
+        <p class="lede">El mismo horario todos los días. Enfoque a la hora en punto, recuperación a los :50 y, cada 4 sesiones, una recuperación larga de 70 minutos. La de 13:50 a 15:00 es tu comida.</p>
+        <ol id="day" class="day-list"></ol>
       </section>
 
       <section class="panel" aria-labelledby="h-log">
@@ -116,12 +115,12 @@
         <p id="notify-msg" class="field-msg" role="status"></p>
         <label class="switch">
           <input type="checkbox" id="wake">
-          <span>Mantener la pantalla encendida durante el ciclo</span>
+          <span>Mantener la pantalla encendida mientras estoy presente</span>
         </label>
         <p id="wake-msg" class="field-msg" role="status"></p>
         <ul class="tips">
           <li>Deja esta pestaña abierta. Puedes cambiar a otra: las alarmas siguen sonando.</li>
-          <li>Si cierras la pestaña, el ciclo sigue contando con el reloj. Al volver, toca “Activar sonido”.</li>
+          <li>Si cierras la pestaña, sigues presente: el horario sigue al reloj. Al volver, toca “Activar sonido”.</li>
           <li>Los binaurales necesitan audífonos: cada oído recibe un tono distinto.</li>
         </ul>
       </section>

@@ -39,8 +39,8 @@ const ICONS = {
 /* ---------- estado ---------- */
 const audio = new AudioEngine();
 let settings = store.loadSettings();
-let run = store.loadRun(); // { anchor, armedAt, quiet, current: { start, session, focusedMs } }
-const log = store.loadLog(); // [{ start, session, minutes, complete }]
+let run = store.loadRun(); // { startedAt, waitUntil, quiet, current: { start, session, size, focusedMs } }
+const log = store.loadLog(); // [{ start, session, size, minutes, complete }]
 
 let lastKey = null;
 let lastTick = Date.now();
@@ -53,7 +53,7 @@ let musicTimer = null;
 let blockedTimer = null;
 let previewTimer = null;
 let wakeLock = null;
-let scheduleKey = '';
+let dayRenderKey = '';
 let dialHourKey = '';
 
 audio.setAlarmVolume(settings.alarm / 100);
@@ -303,13 +303,13 @@ function onEnter(b, live) {
   alarmArmedFor = null;
   if (!audioPending) routeAudio(b, live ? 2500 : 0);
   updateWakeLock();
-  renderSchedule(Date.now());
+  renderDay(Date.now());
 }
 
 function armAlarm(b, now) {
   if (audioPending || !audio.running) return;
   if (b.end - now > 15_000 || alarmArmedFor === b.end) return;
-  const nb = S.blockAt(run.anchor, b.end);
+  const nb = S.blockAt(b.end);
   if (audio.scheduleAlarm(ALARM_FOR[nb.type], b.end)) alarmArmedFor = b.end;
 }
 
@@ -317,7 +317,7 @@ function track(b, now, dt) {
   if (b.type === 'focus') {
     if (!run.current || run.current.start !== b.start) {
       finalize();
-      run.current = { start: b.start, session: b.session, focusedMs: 0 };
+      run.current = { start: b.start, session: b.sessionInCycle, size: b.cycleSize, focusedMs: 0 };
     }
     run.current.focusedMs += dt;
     if (now - lastPersist > 10_000) {
@@ -337,6 +337,7 @@ function finalize() {
     log.push({
       start: c.start,
       session: c.session,
+      size: c.size,
       minutes: Math.round(c.focusedMs / MIN),
       complete: c.focusedMs >= COMPLETE_MS,
     });
@@ -346,17 +347,29 @@ function finalize() {
   renderStats(true);
 }
 
-function start(anchor) {
+/** Empieza a estar presente. `waitUntil`: esperar en silencio hasta ese enfoque. */
+function start(waitUntil = null) {
   audio.unlock();
   audioPending = false;
   $('#resume-banner').hidden = true;
-  run = { anchor, armedAt: Date.now(), quiet: $('#quiet').checked, current: null };
+  run = { startedAt: Date.now(), waitUntil, quiet: $('#quiet').checked, current: null };
   store.saveRun(run);
   lastKey = null;
   alarmArmedFor = null;
-  const b = S.blockAt(anchor, Date.now());
-  if (b.type === 'focus') audio.playAlarm('focus');
+  if (!waitUntil && S.blockAt(Date.now()).type === 'focus') audio.playAlarm('focus');
   tick();
+}
+
+/** Bloque vigente para quien está presente (o la espera hasta su enfoque). */
+function currentBlock(now) {
+  if (run.waitUntil && now < run.waitUntil) {
+    return { ...S.blockAt(run.waitUntil), type: 'waiting', start: run.startedAt, end: run.waitUntil };
+  }
+  if (run.waitUntil) {
+    run.waitUntil = null;
+    store.saveRun(run);
+  }
+  return S.blockAt(now);
 }
 
 function stop() {
@@ -376,7 +389,6 @@ function stop() {
   $('#resume-banner').hidden = true;
   $('#blocked-banner').hidden = true;
   updateWakeLock();
-  scheduleKey = '';
   dialHourKey = '';
   tick();
 }
@@ -398,8 +410,8 @@ function tick() {
     renderIdle(now);
     return;
   }
-  const b = S.blockAt(run.anchor, now);
-  const key = `${b.type}:${b.start ?? 'w'}`;
+  const b = currentBlock(now);
+  const key = `${b.type}:${b.start}`;
   if (key !== lastKey) {
     const live = lastKey !== null;
     lastKey = key;
@@ -487,59 +499,62 @@ function renderClock(now) {
   setText($('#today'), `${WEEKDAYS[d.getDay()]} ${d.getDate()} ${MONTHS[d.getMonth()]}`);
 }
 
+const lowerFirst = (t) => t.charAt(0).toLowerCase() + t.slice(1);
+
+function blockLabel(b) {
+  if (b.type === 'focus') return `Enfoque, sesión ${b.sessionInCycle} de ${b.cycleSize}`;
+  if (b.type === 'long') return b.lunch ? 'Recuperación larga: comida' : 'Recuperación larga';
+  return S.LABELS[b.type];
+}
+
+function nextLine(b) {
+  const nb = S.blockAt(b.end);
+  return `Después: ${lowerFirst(blockLabel(nb))}, de ${hm(nb.start)} a ${hm(nb.end)}.`;
+}
+
+function renderDialFor(now, muted) {
+  const top = S.startOfHour(now);
+  const hourKey = `${muted ? 'm' : 'r'}:${top}`;
+  if (dialHourKey !== hourKey) {
+    dialHourKey = hourKey;
+    drawDialHour(top, S.blocksBetween(top, top + HOUR), muted);
+  }
+  updateDial(now, top, !muted);
+}
+
 function renderIdle(now) {
   document.body.dataset.mode = 'idle';
   const opt = S.startOptions(now);
-  const top = S.startOfHour(now);
-  const nextTop = top + HOUR;
+  const b = opt.block;
 
-  setText($('#mode-label'), 'Listo para empezar');
-  setText($('#countdown'), mmss(nextTop - now));
-  setText($('#mode-sub'), `para las ${hm(nextTop)}`);
+  setText($('#mode-label'), blockLabel(b));
+  setText($('#countdown'), mmss(b.end - now));
+  setText($('#mode-sub'), b.type === 'focus' ? `Hasta las ${hm(b.end)}` : `El enfoque vuelve a las ${hm(b.end)}`);
   document.title = 'Música & Enfoque';
-  $('#cycle').hidden = true;
-  setText($('#next-line'), '');
+  setText($('#next-line'), nextLine(b));
+  renderPips(b);
   $('#idle-controls').hidden = false;
   $('#run-controls').hidden = true;
 
   const join = $('#btn-join');
   const next = $('#btn-next');
+  setText(join, 'Comenzar a estar presente');
   if (opt.kind === 'now') {
-    join.hidden = false;
     next.hidden = true;
-    setText(join, 'Iniciar sesión ahora');
-    join.dataset.anchor = opt.anchor;
-    setText($('#idle-hint'), `Son las ${hm(top)} en punto: la sesión 1 empieza en cuanto presiones.`);
+    setText($('#idle-hint'), `Es hora en punto: el enfoque empieza en cuanto presiones.`);
   } else if (opt.kind === 'choose') {
-    join.hidden = false;
     next.hidden = false;
-    setText(join, `Unirme a la sesión en curso (${Math.ceil(opt.focusLeftMs / MIN)} min de enfoque)`);
-    join.dataset.anchor = opt.joinAnchor;
-    setText(next, `Empezar a las ${hm(opt.nextAnchor)}`);
-    next.dataset.anchor = opt.nextAnchor;
-    setText($('#idle-hint'), `La sesión de las ${hm(top)} ya empezó. Únete con el tiempo que queda o espera a la siguiente hora en punto.`);
+    setText(next, `Esperar al enfoque de las ${hm(opt.nextFocus)}`);
+    next.dataset.wait = opt.nextFocus;
+    setText($('#idle-hint'), `El enfoque de las ${hm(b.start)} ya empezó. Si comienzas ahora, te quedan ${Math.ceil(opt.focusLeftMs / MIN)} min de enfoque.`);
   } else {
-    join.hidden = true;
-    next.hidden = false;
-    setText(next, `Empezar a las ${hm(opt.anchor)}`);
-    next.dataset.anchor = opt.anchor;
-    setText($('#idle-hint'), `Ya pasó el minuto :50. La sesión 1 empieza a las ${hm(opt.anchor)}.`);
+    next.hidden = true;
+    const what = b.type === 'long' ? (b.lunch ? 'la recuperación larga de la comida' : 'una recuperación larga') : 'una recuperación de 10 min';
+    setText($('#idle-hint'), `Estás en ${what}. Si comienzas ahora, suena la música de recuperación y el enfoque vuelve a las ${hm(opt.nextFocus)}.`);
   }
-  next.classList.toggle('primary', opt.kind === 'wait');
 
-  // Dial de muestra: la hora actual con su patrón de enfoque y recuperación
-  const hourKey = `idle:${top}`;
-  if (dialHourKey !== hourKey) {
-    dialHourKey = hourKey;
-    drawDialHour(top, [
-      { type: 'focus', start: top, end: top + 50 * MIN },
-      { type: 'break', start: top + 50 * MIN, end: nextTop },
-    ], true);
-  }
-  updateDial(now, top, false);
-
-  const previewAnchor = opt.kind === 'wait' ? opt.anchor : opt.kind === 'now' ? opt.anchor : opt.joinAnchor;
-  renderSchedule(now, previewAnchor);
+  renderDialFor(now, true);
+  renderDay(now);
   renderStats();
 }
 
@@ -548,50 +563,31 @@ function renderRun(b, now) {
   $('#idle-controls').hidden = true;
   $('#run-controls').hidden = false;
 
-  const label = S.LABELS[b.type];
+  const label = blockLabel(b);
   const left = mmss(b.end - now);
-  setText($('#mode-label'), b.type === 'focus' ? `Enfoque, sesión ${b.session}` : label);
+  setText($('#mode-label'), label);
   setText($('#countdown'), left);
   let sub = '';
-  if (b.type === 'waiting') sub = `La sesión 1 empieza a las ${hm(b.end)}`;
+  if (b.type === 'waiting') sub = `Tu enfoque empieza a las ${hm(b.end)}`;
   else if (b.type === 'focus') sub = `Hasta las ${hm(b.end)}`;
-  else if (b.type === 'break') sub = `Vuelves al enfoque a las ${hm(b.end)}`;
-  else sub = `Fin del ciclo ${b.cycle}. Vuelves a las ${hm(b.end)}`;
+  else sub = `El enfoque vuelve a las ${hm(b.end)}`;
   setText($('#mode-sub'), sub);
   document.title = `${left} ${label} · Música & Enfoque`;
-
-  const nb = S.blockAt(run.anchor, b.end);
-  const nbLabel = nb.type === 'focus' ? `enfoque de la sesión ${nb.session}` : S.LABELS[nb.type].toLowerCase();
-  setText($('#next-line'), `Después: ${nbLabel}, de ${hm(nb.start)} a ${hm(nb.end)}.`);
-
+  setText($('#next-line'), nextLine(b));
   renderPips(b);
 
-  const top = S.startOfHour(now);
-  const hourKey = `run:${run.anchor}:${top}:${b.type === 'waiting'}`;
-  if (dialHourKey !== hourKey) {
-    dialHourKey = hourKey;
-    if (b.type === 'waiting') {
-      drawDialHour(top, [
-        { type: 'focus', start: top, end: top + 50 * MIN },
-        { type: 'break', start: top + 50 * MIN, end: top + HOUR },
-      ], true);
-    } else {
-      drawDialHour(top, S.blocksIn(run.anchor, top, top + HOUR), false);
-    }
-  }
   if (!document.hidden) {
-    updateDial(now, top, b.type !== 'waiting');
-    renderSchedule(now);
+    renderDialFor(now, b.type === 'waiting');
+    renderDay(now);
     renderStats();
   }
 }
 
 function renderPips(b) {
-  const box = $('#cycle');
-  box.hidden = false;
-  setText($('#cycle-label'), `Ciclo ${b.cycle}`);
+  $('#cycle').hidden = false;
+  setText($('#cycle-label'), b.cycleName);
   const items = [];
-  for (let i = 1; i <= 4; i++) {
+  for (let i = 1; i <= b.cycleSize; i++) {
     let st = 'todo';
     if (b.type !== 'waiting') {
       if (i < b.sessionInCycle) st = 'done';
@@ -610,41 +606,59 @@ function renderPips(b) {
   }
 }
 
-function renderSchedule(now, previewAnchor) {
-  const anchor = run ? run.anchor : previewAnchor;
-  if (anchor == null) return;
-  const list = $('#schedule');
-  const blocks = S.upcoming(anchor, now, 11);
-  const key = `${run ? 'run' : 'preview'}:${anchor}:${blocks[0].start}`;
-  setText($('#schedule-note'), run ? '' : 'Así quedaría si empiezas ahora:');
-  if (key !== scheduleKey) {
-    scheduleKey = key;
-    let lastCycle = null;
+/** Las 24 horas de hoy: qué pasa en cada hora, con la actual marcada. */
+function renderDay(now) {
+  const list = $('#day');
+  const key = dayKey(now);
+  if (key !== dayRenderKey) {
+    dayRenderKey = key;
     const rows = [];
-    for (const b of blocks) {
-      if (lastCycle !== null && b.cycle !== lastCycle) rows.push(`<li class="row-sep">Ciclo ${b.cycle}</li>`);
-      lastCycle = b.cycle;
-      const what = b.type === 'focus' ? `Enfoque, sesión ${b.session}` : S.LABELS[b.type];
-      const mins = Math.round((b.end - b.start) / MIN);
+    for (const h of S.dayHours(now)) {
+      if (h.role === 'session' && h.sessionInCycle === 1) {
+        rows.push(`<li class="hr-group">${h.cycleName}<span>${h.cycleSize} sesiones</span></li>`);
+      }
+      let what;
+      let note;
+      let bar;
+      if (h.role === 'long') {
+        what = h.lunch ? 'Recuperación larga: comida' : 'Recuperación larga';
+        note = `${hm(h.start - 10 * MIN)}–${hm(h.end)}`;
+        bar = '<i class="seg recovery" style="flex:60"><b></b></i>';
+      } else {
+        what = `Enfoque, sesión ${h.sessionInCycle} de ${h.cycleSize}`;
+        const at50 = hm(h.start + 50 * MIN);
+        note = h.endsInLong ? `${at50} recuperación larga${PLAN_LUNCH(h) ? ' (comida)' : ''}` : `${at50} recuperación`;
+        bar = '<i class="seg focus" style="flex:50"><b></b></i><i class="seg recovery" style="flex:10"><b></b></i>';
+      }
       rows.push(`
-        <li class="row ${S.modeOf(b.type)} ${b.type}" data-start="${b.start}" data-end="${b.end}">
-          <span class="row-time">${hm(b.start)}–${hm(b.end)}</span>
-          <span class="row-what">${what}</span>
-          <span class="row-dur">${mins} min</span>
-          <span class="row-bar"><i></i></span>
+        <li class="hr ${h.role}${h.role === 'long' && h.lunch ? ' lunch' : ''}" data-start="${h.start}" data-end="${h.end}" data-role="${h.role}">
+          <span class="hr-time">${hm(h.start)}</span>
+          <span class="hr-text"><span class="hr-what">${what}</span><span class="hr-note">${note}</span></span>
+          <span class="hr-bar" aria-hidden="true">${bar}</span>
         </li>`);
     }
     list.innerHTML = rows.join('');
   }
-  for (const li of list.querySelectorAll('.row')) {
+  for (const li of list.querySelectorAll('.hr')) {
     const s = Number(li.dataset.start);
     const e = Number(li.dataset.end);
-    const isNow = run && now >= s && now < e;
-    li.classList.toggle('is-now', !!isNow);
-    const bar = li.querySelector('.row-bar i');
-    bar.style.width = isNow ? `${(((now - s) / (e - s)) * 100).toFixed(2)}%` : '0%';
+    const past = now >= e;
+    const isNow = now >= s && now < e;
+    li.classList.toggle('is-past', past);
+    li.classList.toggle('is-now', isNow);
+    const fills = li.querySelectorAll('.seg b');
+    const m = past ? 60 : isNow ? (now - s) / MIN : 0;
+    if (li.dataset.role === 'long') {
+      fills[0].style.width = `${((m / 60) * 100).toFixed(2)}%`;
+    } else {
+      fills[0].style.width = `${((Math.min(m, 50) / 50) * 100).toFixed(2)}%`;
+      fills[1].style.width = `${((Math.max(0, m - 50) / 10) * 100).toFixed(2)}%`;
+    }
   }
 }
+
+/** ¿La recuperación larga que sigue a esta hora es la de la comida? */
+const PLAN_LUNCH = (h) => S.PLAN[(h.hour + 1) % 24].lunch;
 
 function renderStats(force = false) {
   const now = Date.now();
@@ -689,9 +703,9 @@ function renderStats(force = false) {
   }
 
   const items = todays.map((e) => `
-    <li><span class="log-time">${hm(e.start)}</span><span>Sesión ${e.session}</span><span class="log-min">${e.minutes} min</span><span class="log-state ${e.complete ? 'ok' : ''}">${e.complete ? 'Completa' : 'Parcial'}</span></li>`);
+    <li><span class="log-time">${hm(e.start)}</span><span>${e.size ? `Sesión ${e.session} de ${e.size}` : `Sesión ${e.session}`}</span><span class="log-min">${e.minutes} min</span><span class="log-state ${e.complete ? 'ok' : ''}">${e.complete ? 'Completa' : 'Parcial'}</span></li>`);
   if (inProgress >= 1) {
-    items.push(`<li class="live"><span class="log-time">${hm(run.current.start)}</span><span>Sesión ${run.current.session}</span><span class="log-min">${Math.floor(inProgress)} min</span><span class="log-state">En curso</span></li>`);
+    items.push(`<li class="live"><span class="log-time">${hm(run.current.start)}</span><span>Sesión ${run.current.session} de ${run.current.size}</span><span class="log-min">${Math.floor(inProgress)} min</span><span class="log-state">En curso</span></li>`);
   }
   const logHTML = items.length ? items.join('') : '<li class="empty">Aún no hay sesiones hoy. Cada sesión aparece aquí al terminar su enfoque.</li>';
   const ul = $('#today-log');
@@ -707,12 +721,10 @@ function notify(b) {
   if (!document.hidden) return;
   const body =
     b.type === 'focus'
-      ? `Sesión ${b.session}, hasta las ${hm(b.end)}.`
-      : b.type === 'long'
-        ? `Recuperación larga hasta las ${hm(b.end)}.`
-        : `Recuperación hasta las ${hm(b.end)}.`;
+      ? `Sesión ${b.sessionInCycle} de ${b.cycleSize}, hasta las ${hm(b.end)}.`
+      : `El enfoque vuelve a las ${hm(b.end)}.`;
   try {
-    new Notification(S.LABELS[b.type], { body, tag: 'musica-enfoque', icon: 'icon.svg', silent: true });
+    new Notification(blockLabel(b), { body, tag: 'musica-enfoque', icon: 'icon.svg', silent: true });
   } catch {
     /* algunos navegadores solo permiten notificaciones desde un service worker */
   }
@@ -758,9 +770,9 @@ function armTwoStep(btn, label, confirmLabel, action) {
 }
 
 function wireGlobal() {
-  $('#btn-join').addEventListener('click', (e) => start(Number(e.currentTarget.dataset.anchor)));
-  $('#btn-next').addEventListener('click', (e) => start(Number(e.currentTarget.dataset.anchor)));
-  armTwoStep($('#btn-stop'), 'Detener ciclo', 'Toca otra vez para detener', stop);
+  $('#btn-join').addEventListener('click', () => start(null));
+  $('#btn-next').addEventListener('click', (e) => start(Number(e.currentTarget.dataset.wait)));
+  armTwoStep($('#btn-stop'), 'Dejar de estar presente', 'Toca otra vez para confirmar', stop);
   armTwoStep($('#btn-clear'), 'Borrar historial', 'Toca otra vez para borrar todo', () => {
     log.splice(0, log.length);
     store.saveLog(log);
@@ -856,8 +868,12 @@ function init() {
   buildCards();
   wireGlobal();
   if (run) {
+    // Formato anterior (ciclo contado desde que se iniciaba): se conserva como presencia activa
+    if (run.startedAt == null) run = { startedAt: run.anchor ?? Date.now(), waitUntil: null, quiet: !!run.quiet, current: null };
+    if (run.waitUntil && Date.now() >= run.waitUntil) run.waitUntil = null;
+    store.saveRun(run);
     // Cerrar un enfoque guardado que ya terminó mientras la pestaña estaba cerrada
-    const b = S.blockAt(run.anchor, Date.now());
+    const b = S.blockAt(Date.now());
     if (run.current && run.current.start !== b.start) finalize();
     $('#resume-banner').hidden = false;
   }

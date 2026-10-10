@@ -431,84 +431,90 @@ select:focus,
   color: var(--bruma);
 }
 
-/* ---------- horario ---------- */
-.schedule-note {
-  margin: 0 0 8px;
-  font-size: 0.92rem;
-}
-
-.schedule-note:empty { display: none; }
-
-.schedule {
-  display: grid;
-  gap: 2px;
+/* ---------- las 24 horas ---------- */
+.day-list {
   list-style: none;
   margin: 0;
   padding: 0;
-  max-width: 620px;
+  max-width: 640px;
 }
 
-.row {
-  position: relative;
+.hr {
   display: grid;
-  grid-template-columns: 7.4rem minmax(0, 1fr) auto;
-  gap: 12px;
+  grid-template-columns: 3.6rem minmax(0, 1fr) minmax(6rem, 9rem);
+  gap: 14px;
   align-items: center;
-  padding: 10px 14px 10px 18px;
+  padding: 7px 12px;
   border-radius: 10px;
-  overflow: hidden;
 }
 
-.row::before {
-  content: "";
-  position: absolute;
-  left: 0;
-  top: 9px;
-  bottom: 9px;
-  width: 3px;
-  border-radius: 2px;
-  background: var(--laton);
-}
-
-.row.recovery::before { background: var(--salvia); }
-.row.long::before { width: 6px; }
-.row.long .row-what { font-weight: 600; }
-
-.row-time {
+.hr-time {
   color: var(--bruma);
   font-variant-numeric: tabular-nums;
 }
 
-.row-dur {
+.hr-text {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 2px 10px;
+  min-width: 0;
+}
+
+.hr-what { font-size: 0.95rem; }
+
+.hr-note {
   color: var(--tenue);
-  font-size: 0.88rem;
+  font-size: 0.84rem;
   font-variant-numeric: tabular-nums;
 }
 
-.row.is-now { background: var(--panel); }
-.row.is-now .row-time { color: var(--marfil); }
-
-.row-bar {
-  position: absolute;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  height: 2px;
+.hr-bar {
+  display: flex;
+  gap: 2px;
+  height: 8px;
 }
 
-.row-bar i {
+.hr-bar .seg {
+  position: relative;
   display: block;
-  width: 0;
-  height: 100%;
-  background: var(--laton);
+  overflow: hidden;
+  border-radius: 3px;
 }
 
-.row.recovery .row-bar i { background: var(--salvia); }
+.hr-bar .seg.focus { background: color-mix(in oklab, var(--laton) 24%, var(--panel)); }
+.hr-bar .seg.recovery { background: color-mix(in oklab, var(--salvia) 24%, var(--panel)); }
 
-.row-sep {
-  padding: 16px 18px 4px;
+.hr-bar .seg b {
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 0;
+}
+
+.hr-bar .seg.focus b { background: var(--laton); }
+.hr-bar .seg.recovery b { background: var(--salvia); }
+
+.hr.long .hr-what { font-weight: 600; }
+.hr.lunch .hr-what { color: var(--salvia); }
+
+.hr.is-past .hr-time,
+.hr.is-past .hr-what { color: var(--tenue); }
+.hr.is-past .hr-bar { opacity: 0.5; }
+
+.hr.is-now { background: var(--panel); }
+.hr.is-now .hr-time { color: var(--marfil); }
+
+.hr-group {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 20px 12px 6px;
+  font: 400 1.08rem/1.2 var(--f-display);
+}
+
+.hr-group span {
   color: var(--tenue);
-  font-size: 0.85rem;
+  font: 400 0.82rem/1.2 var(--f-ui);
 }
 
 /* ---------- tarjetas de música ---------- */
@@ -834,7 +840,8 @@ select:focus,
   .now span { display: none; }
   .stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .stats div:last-child { grid-column: 1 / -1; }
-  .row { grid-template-columns: 6.6rem minmax(0, 1fr) auto; gap: 8px; padding-right: 10px; }
+  .hr { grid-template-columns: 3rem minmax(0, 1fr); gap: 6px 10px; }
+  .hr-bar { grid-column: 2; }
   .today-log li { grid-template-columns: 3.2rem minmax(0, 1fr) auto; }
   .today-log .log-state { grid-column: 2 / -1; text-align: left; margin-top: -6px; font-size: 0.85rem; }
 }
