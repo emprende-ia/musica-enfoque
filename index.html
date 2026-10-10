@@ -20,7 +20,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Google+Sans+Flex:opsz,wght,ROND@6..144,1..1000,0..100&display=swap">
-  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Rounded:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200&icon_names=alarm,arrow_drop_down,brightness_auto,check,close,dark_mode,delete,graphic_eq,headphones,light_mode,local_fire_department,pause,play_arrow,queue_music,restaurant,schedule,self_improvement,shield,skip_next,skip_previous,spa,stop_circle,timer,volume_up&display=block">
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Rounded:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200&icon_names=account_circle,alarm,arrow_drop_down,brightness_auto,check,close,cloud_done,cloud_off,dark_mode,delete,graphic_eq,headphones,light_mode,local_fire_department,login,logout,pause,play_arrow,queue_music,restaurant,schedule,self_improvement,shield,skip_next,skip_previous,spa,stop_circle,timer,volume_up&display=block">
   <link rel="stylesheet" href="css/tokens.css">
   <link rel="stylesheet" href="css/styles.css">
   <script type="module" src="js/app.js"></script>
@@ -42,6 +42,9 @@
         <span class="chip-shields" id="chip-shields" aria-hidden="true"></span>
       </a>
       <p class="now"><time id="clock">--:--</time> <span id="today"></span></p>
+      <button type="button" id="btn-account" class="icon-btn account" aria-label="Iniciar sesión para sincronizar" hidden>
+        <span class="ms" aria-hidden="true">account_circle</span>
+      </button>
       <button type="button" id="btn-theme" class="icon-btn" aria-label="Tema: igual que el sistema">
         <span class="ms" aria-hidden="true">brightness_auto</span>
       </button>
@@ -148,6 +151,23 @@
       <section class="pane" aria-labelledby="h-settings">
         <h2 id="h-settings">Ajustes</h2>
 
+        <h3 class="subhead" id="h-sync">Sincronización</h3>
+        <div class="sync-card">
+          <span class="sync-avatar" id="sync-avatar" aria-hidden="true"><span class="ms">cloud_off</span></span>
+          <div class="sync-text">
+            <p id="sync-title" class="sync-title">Tus datos están solo en este navegador</p>
+            <p id="sync-detail" class="sync-detail" role="status"></p>
+          </div>
+          <div class="sync-actions">
+            <button type="button" id="btn-signin" class="btn filled" hidden>
+              <span class="ms" aria-hidden="true">login</span><span class="label">Iniciar sesión con Google</span>
+            </button>
+            <button type="button" id="btn-signout" class="btn text" hidden>
+              <span class="ms" aria-hidden="true">logout</span><span class="label">Cerrar sesión</span>
+            </button>
+          </div>
+        </div>
+
         <h3 class="subhead">Tema</h3>
         <div class="connected" role="radiogroup" aria-label="Tema">
           <button type="button" role="radio" data-theme-opt="system"><span class="ms" aria-hidden="true">brightness_auto</span>Sistema</button>
@@ -191,7 +211,7 @@
   <div id="snackbar" class="snackbar" role="status" aria-live="polite" hidden></div>
 
   <footer class="foot">
-    <p>Los horarios siguen el reloj de este dispositivo. Tus ajustes, historial y racha se guardan solo en este navegador.</p>
+    <p>Los horarios siguen el reloj de este dispositivo. Tus ajustes, historial y racha se guardan en este navegador y, si inicias sesión, también en tu cuenta.</p>
   </footer>
 </body>
 </html>

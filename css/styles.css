@@ -1278,6 +1278,47 @@ input[type="range"]:focus-visible { outline-offset: 0; border-radius: var(--shap
 }
 
 /* ---------- ajustes ---------- */
+.sync-card {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  grid-template-areas: "av text" "av actions";
+  gap: 4px 16px;
+  align-items: center;
+  max-width: 640px;
+  padding: 16px 20px;
+  border-radius: var(--shape-xl);
+  background: var(--md-sys-color-surface-container);
+}
+
+.sync-avatar {
+  grid-area: av;
+  display: grid;
+  place-items: center;
+  width: 48px;
+  height: 48px;
+  overflow: hidden;
+  border-radius: var(--shape-full);
+  background: var(--md-sys-color-secondary-container);
+  color: var(--md-sys-color-on-secondary-container);
+}
+
+.sync-avatar img,
+.icon-btn.account img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.icon-btn.account img { width: 32px; height: 32px; border-radius: var(--shape-full); }
+
+.sync-text { grid-area: text; min-width: 0; }
+.sync-title { margin: 0; font-weight: 600; overflow-wrap: anywhere; }
+.sync-detail { margin: 2px 0 0; color: var(--md-sys-color-on-surface-variant); font-size: 0.875rem; line-height: 1.25rem; }
+.sync-detail:empty { display: none; }
+.sync-actions { grid-area: actions; display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+.sync-actions:not(:has(button:not([hidden]))) { display: none; }
+
 .settings-list { display: grid; gap: 14px; max-width: 560px; }
 
 .field-msg {

@@ -52,6 +52,28 @@ Las 24 horas no se dividen exacto en ciclos de 5 horas, así que la madrugada es
 
 La racha se calcula con los minutos de enfoque de cada día, que se guardan aparte del historial detallado, así no se pierde aunque el historial se recorte.
 
+## Sincronización entre dispositivos
+
+En **Ajustes → Sincronización**, o con el ícono de cuenta de la barra superior, inicias sesión con Google. Desde ese momento la app guarda en tu cuenta de Firebase tus ajustes, playlists, historial y racha, y los mantiene iguales en la computadora y en el celular.
+
+- **Qué se sincroniza:** ajustes de enfoque y recuperación (playlists, volúmenes, binaurales), volumen de alarmas, tema, sesiones y minutos por día.
+- **Qué no:** los permisos de notificaciones y de pantalla encendida, y el estado de "estar presente" de cada dispositivo.
+- **Sin duplicados:** cada sesión se identifica por la hora en que empezó su enfoque. Si el mismo bloque quedó registrado en dos dispositivos, cuenta una vez, con el registro de más minutos.
+- **Sin conexión:** todo se guarda en el navegador y se sube al volver a conectarte.
+
+Proyecto de Firebase: `musica-enfoque`, configurado en `js/firebase-config.js`. Estos datos están hechos para ir en una página web pública. La protección la dan las reglas de Firestore, que solo dejan a cada persona leer y escribir sus propios datos:
+
+```
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /users/{uid}/{document=**} {
+      allow read, write: if request.auth != null && request.auth.uid == uid;
+    }
+  }
+}
+```
+
 ## Diseño
 
 Material 3 Expressive: botones que cambian de forma al presionarlos, grupos de botones conectados, sliders y switches de M3, listas segmentadas y un indicador de progreso ondulado en el dial y en la meta diaria. Fuentes: Google Sans Flex y Material Symbols Rounded.
@@ -120,7 +142,7 @@ python3 -m http.server 8080
 # abre http://localhost:8080
 ```
 
-Pruebas del horario y de las rachas (Node 18 o superior):
+Pruebas del horario, las rachas y la sincronización (Node 18 o superior):
 
 ```bash
 npm test
@@ -137,10 +159,13 @@ js/streak.js          Rachas y protectores (lógica pura, con pruebas)
 js/audio.js           Binaurales, ruido marrón y alarmas (Web Audio)
 js/youtube.js         Reproductor de playlists (YouTube IFrame API)
 js/store.js           Ajustes, presencia, historial y minutos por día
+js/sync.js            Sincronización con Firebase (Google + Firestore)
+js/merge.js           Unión de sesiones entre dispositivos (con pruebas)
+js/firebase-config.js Configuración del proyecto de Firebase
 js/tick-worker.js     Reloj en segundo plano
 js/app.js             Interfaz y flujo del ciclo
 tests/                Pruebas del horario y de las rachas
 tools/                Generador de colores
 ```
 
-Tus ajustes, historial y racha se guardan solo en tu navegador.
+Tus ajustes, historial y racha se guardan en tu navegador y, si inicias sesión, también en tu cuenta.

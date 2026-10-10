@@ -3,6 +3,8 @@ import { AudioEngine, PRESETS, findPreset } from './audio.js';
 import { PlaylistPlayer, parsePlaylistId, playlistHint } from './youtube.js';
 import { computeStreak, keyOf, dateOf, GOAL_MIN, MAX_SHIELDS } from './streak.js';
 import * as store from './store.js';
+import { Sync, syncConfigured } from './sync.js';
+import { mergeSessions, toRemoteMap, fromRemote } from './merge.js';
 
 const { MIN, HOUR } = S;
 const COMPLETE_MS = 45 * MIN; // una sesión cuenta como completa con 45 min o más de enfoque
@@ -84,7 +86,7 @@ function applyTheme(theme) {
 
 function setTheme(theme) {
   settings.theme = theme;
-  store.saveSettings(settings);
+  saveSettings();
   applyTheme(theme);
 }
 
@@ -191,22 +193,32 @@ function showOutput(card, k, v) {
   if (o) o.textContent = `${v}%`;
 }
 
-function wireCard(card, mode) {
+/** Pone en la tarjeta los valores actuales de los ajustes. */
+function refreshCard(mode) {
+  const card = cards[mode];
   const s = settings[mode];
-  const input = $('input[name="playlist"]', card);
-  input.value = s.playlist;
-
+  $('input[name="playlist"]', card).value = s.playlist;
   card.querySelectorAll('[data-k]').forEach((el) => {
     const k = el.dataset.k;
     if (el.type === 'checkbox') el.checked = !!s[k];
     else el.value = s[k];
     if (el.type === 'range') paintRange(el);
     showOutput(card, k, s[k]);
+  });
+}
+
+function wireCard(card, mode) {
+  const s = settings[mode];
+  const input = $('input[name="playlist"]', card);
+  refreshCard(mode);
+
+  card.querySelectorAll('[data-k]').forEach((el) => {
+    const k = el.dataset.k;
     el.addEventListener(el.type === 'range' ? 'input' : 'change', () => {
       s[k] = el.type === 'checkbox' ? el.checked : el.type === 'range' ? Number(el.value) : el.value;
       if (el.type === 'range') paintRange(el);
       showOutput(card, k, s[k]);
-      store.saveSettings(settings);
+      saveSettings();
       onSettingChanged(mode, k);
     });
   });
@@ -233,7 +245,7 @@ async function loadPlaylist(mode, raw, fromUser) {
   const text = (raw || '').trim();
   if (!text) {
     s.playlist = '';
-    store.saveSettings(settings);
+    if (fromUser) saveSettings();
     players[mode].unload();
     card.classList.remove('has-player');
     $('.transport', card).hidden = true;
@@ -251,7 +263,7 @@ async function loadPlaylist(mode, raw, fromUser) {
     return;
   }
   s.playlist = text;
-  store.saveSettings(settings);
+  if (fromUser) saveSettings();
   plStatus(mode, 'Cargando playlist…');
   card.classList.add('has-player');
   $('.transport', card).hidden = false;
@@ -381,11 +393,15 @@ function finalize() {
   run.current = null;
   if (c.focusedMs >= MIN) {
     const minutes = Math.round(c.focusedMs / MIN);
-    log.push({ start: c.start, session: c.session, size: c.size, minutes, complete: c.focusedMs >= COMPLETE_MS });
+    const entry = { start: c.start, session: c.session, size: c.size, minutes, complete: c.focusedMs >= COMPLETE_MS };
+    const existing = log.find((e) => e.start === c.start); // ya llegó de otro dispositivo
+    if (!existing) log.push(entry);
+    else if (minutes > existing.minutes) Object.assign(existing, entry);
     store.saveLog(log);
     const k = dayKey(c.start);
-    days[k] = (days[k] || 0) + minutes;
+    days[k] = dayEntries(k).reduce((sum, e) => sum + e.minutes, 0);
     store.saveDays(days);
+    pushDay(k);
   }
   store.saveRun(run);
   renderStats(true);
@@ -866,7 +882,9 @@ function renderStats(force = false) {
   if (!force && now - lastStats < 5000) return;
   lastStats = now;
   const today = dayKey(now);
-  const inProgress = run?.current && dayKey(run.current.start) === today ? run.current.focusedMs / MIN : 0;
+  const cur = run?.current && dayKey(run.current.start) === today ? run.current : null;
+  const already = cur ? log.find((e) => e.start === cur.start)?.minutes || 0 : 0;
+  const inProgress = cur ? Math.max(0, cur.focusedMs / MIN - already) : 0;
   const todays = log.filter((e) => dayKey(e.start) === today).sort((a, b) => a.start - b.start);
   const todayMin = (days[today] || 0) + inProgress;
   setText($('#stat-today'), fmtMin(Math.round(todayMin)));
@@ -948,6 +966,168 @@ async function updateWakeLock() {
   }
 }
 
+/* ---------- sincronización entre dispositivos ---------- */
+let pushSettingsTimer = null;
+let lastSyncAt = 0;
+let syncState = syncConfigured ? 'loading' : 'off';
+let syncDetail = '';
+let syncUser = null;
+
+function saveSettings() {
+  store.saveSettings(settings);
+  if (!sync.signedIn) return;
+  clearTimeout(pushSettingsTimer);
+  pushSettingsTimer = setTimeout(() => sync.pushSettings(settings, settings._updatedAt), 1200);
+}
+
+const dayEntries = (k) => log.filter((e) => dayKey(e.start) === k);
+
+function pushDay(k) {
+  if (!sync.signedIn) return;
+  sync.pushDay(k, toRemoteMap(dayEntries(k)), days[k] || 0);
+}
+
+function onRemoteSettings(remote, remoteAt) {
+  const localAt = settings._updatedAt || 0;
+  if (!remote || remoteAt < localAt) {
+    // La nube no tiene ajustes o los de aquí son más nuevos: se suben
+    if (localAt > remoteAt) sync.pushSettings(settings, localAt || Date.now());
+    return;
+  }
+  if (remoteAt === localAt) return;
+  for (const mode of MODES) {
+    if (!remote[mode]) continue;
+    const before = settings[mode].playlist;
+    Object.assign(settings[mode], remote[mode]);
+    refreshCard(mode);
+    if (settings[mode].playlist !== before) loadPlaylist(mode, settings[mode].playlist, false);
+    players[mode].setVolume(settings[mode].music);
+    players[mode].setShuffle(settings[mode].shuffle);
+    if (activeMode() === mode && !previewTimer && run && !run.quiet && !audioPending) audio.setLayer(layerFor(mode), 1);
+  }
+  if (typeof remote.alarm === 'number') {
+    settings.alarm = remote.alarm;
+    const vol = $('#alarm-vol');
+    vol.value = settings.alarm;
+    paintRange(vol);
+    $('#alarm-out').textContent = `${settings.alarm}%`;
+    audio.setAlarmVolume(settings.alarm / 100);
+  }
+  if (remote.theme && remote.theme !== settings.theme) {
+    settings.theme = remote.theme;
+    applyTheme(settings.theme);
+  }
+  settings._updatedAt = remoteAt;
+  store.saveSettings(settings, { touch: false });
+}
+
+function onRemoteDays(docs, { initial }) {
+  let changed = false;
+  const seen = new Set();
+  for (const d of docs) {
+    const k = d.day;
+    seen.add(k);
+    const local = dayEntries(k);
+    const res = mergeSessions(local, d.sessions || {});
+    if (res.localChanged) {
+      for (let i = log.length - 1; i >= 0; i--) if (dayKey(log[i].start) === k) log.splice(i, 1);
+      for (const [start, r] of Object.entries(res.merged)) log.push(fromRemote(start, r));
+      changed = true;
+    }
+    const hasSessions = local.length || Object.keys(d.sessions || {}).length;
+    const target = hasSessions ? res.minutes : Math.max(days[k] || 0, d.minutes || 0);
+    if (target !== (days[k] || 0)) {
+      days[k] = target;
+      changed = true;
+    }
+    if (res.remoteNeedsPush) sync.pushDay(k, res.merged, target);
+  }
+  if (initial) {
+    // Días que solo existen aquí: se suben
+    for (const k of Object.keys(days)) {
+      if (!seen.has(k) && days[k] > 0) sync.pushDay(k, toRemoteMap(dayEntries(k)), days[k]);
+    }
+  }
+  if (changed) {
+    log.sort((a, b) => a.start - b.start);
+    store.saveLog(log);
+    store.saveDays(days);
+    renderStats(true);
+  }
+  lastSyncAt = Date.now();
+  renderSync();
+}
+
+function renderSync() {
+  const title = $('#sync-title');
+  const detail = $('#sync-detail');
+  const signIn = $('#btn-signin');
+  const signOutBtn = $('#btn-signout');
+  const account = $('#btn-account');
+  const avatar = $('#sync-avatar');
+  account.hidden = !syncConfigured;
+  signIn.hidden = !syncConfigured || !!syncUser;
+  signOutBtn.hidden = !syncUser;
+
+  if (!syncConfigured) {
+    setText(title, 'La sincronización aún no está conectada');
+    setText(detail, 'Tus datos se guardan solo en este navegador.');
+    avatar.innerHTML = icon('cloud_off');
+    return;
+  }
+  if (!syncUser) {
+    setText(title, 'Tus datos están solo en este navegador');
+    setText(detail, syncState === 'error' && syncDetail ? syncDetail : 'Inicia sesión con Google para guardarlos en la nube y verlos igual en tu celular.');
+    avatar.innerHTML = icon('cloud_off');
+    account.innerHTML = icon('account_circle');
+    account.setAttribute('aria-label', 'Iniciar sesión para sincronizar');
+    account.title = 'Iniciar sesión para sincronizar';
+    return;
+  }
+  const name = syncUser.displayName || syncUser.email || 'Tu cuenta';
+  setText(title, syncUser.email ? `${name} (${syncUser.email})` : name);
+  let text;
+  if (syncState === 'error') text = syncDetail;
+  else if (syncState === 'syncing') text = 'Sincronizando…';
+  else text = `Sincronizado${lastSyncAt ? ` a las ${hm(lastSyncAt)}` : ''}. Tus ajustes, playlists, historial y racha se guardan en tu cuenta.`;
+  setText(detail, text);
+  const photo = syncUser.photoURL ? `<img src="${syncUser.photoURL}" alt="" referrerpolicy="no-referrer">` : icon('cloud_done');
+  if (avatar.dataset.photo !== photo) {
+    avatar.innerHTML = photo;
+    avatar.dataset.photo = photo;
+    account.innerHTML = photo;
+  }
+  account.setAttribute('aria-label', `Sincronizado con ${name}. Ver sincronización.`);
+  account.title = `Sincronizado con ${name}`;
+}
+
+const sync = new Sync({
+  onStatus: (state, detail) => {
+    syncState = state;
+    syncDetail = detail;
+    if (state === 'synced') lastSyncAt = Date.now();
+    renderSync();
+  },
+  onUser: (user) => {
+    syncUser = user;
+    renderSync();
+  },
+  onRemoteSettings,
+  onRemoteDays,
+});
+
+function wireSync() {
+  renderSync();
+  const signIn = () => sync.signIn();
+  $('#btn-signin').addEventListener('click', signIn);
+  $('#btn-signout').addEventListener('click', () => sync.signOut());
+  $('#btn-account').addEventListener('click', () => {
+    if (syncUser) $('#h-sync').scrollIntoView({ behavior: reduceMotion.matches ? 'auto' : 'smooth', block: 'center' });
+    else signIn();
+  });
+  sync.init();
+}
+
 /* ---------- controles generales ---------- */
 function armTwoStep(btn, label, confirmLabel, action) {
   let armed = null;
@@ -974,7 +1154,11 @@ function wireGlobal() {
   $('#btn-join').addEventListener('click', () => start(null));
   $('#btn-next').addEventListener('click', (e) => start(Number(e.currentTarget.dataset.wait)));
   armTwoStep($('#btn-stop'), 'Dejar de estar presente', 'Toca otra vez para confirmar', stop);
-  armTwoStep($('#btn-clear'), 'Borrar historial', 'Toca otra vez: se borra también la racha', () => {
+  armTwoStep($('#btn-clear'), 'Borrar historial', 'Toca otra vez: se borra también la racha', async () => {
+    if (sync.signedIn) {
+      const keys = new Set([...Object.keys(days), ...(await sync.remoteDayKeys().catch(() => []))]);
+      await sync.deleteDays([...keys]);
+    }
     log.splice(0, log.length);
     store.saveLog(log);
     for (const k of Object.keys(days)) delete days[k];
@@ -1013,7 +1197,7 @@ function wireGlobal() {
     paintRange(vol);
     $('#alarm-out').textContent = `${settings.alarm}%`;
     audio.setAlarmVolume(settings.alarm / 100);
-    store.saveSettings(settings);
+    saveSettings();
   });
   document.querySelectorAll('[data-test]').forEach((b) =>
     b.addEventListener('click', () => audio.playAlarm(b.dataset.test)),
@@ -1037,7 +1221,7 @@ function wireGlobal() {
         }
       }
       settings.notify = notifyBox.checked;
-      store.saveSettings(settings);
+      saveSettings();
     });
   }
 
@@ -1049,7 +1233,7 @@ function wireGlobal() {
   wake.checked = settings.wake;
   wake.addEventListener('change', () => {
     settings.wake = wake.checked;
-    store.saveSettings(settings);
+    saveSettings();
     updateWakeLock();
   });
 
@@ -1094,6 +1278,7 @@ function init() {
   renderStats(true);
   tick();
   startTicker();
+  wireSync();
 }
 
 init();

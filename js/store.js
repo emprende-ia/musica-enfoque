@@ -47,7 +47,11 @@ export function loadSettings() {
   };
 }
 
-export const saveSettings = (s) => write(KEYS.settings, s);
+/** Guarda los ajustes. `touch` marca la hora del cambio (para decidir qué dispositivo gana al sincronizar). */
+export function saveSettings(s, { touch = true } = {}) {
+  if (touch) s._updatedAt = Date.now();
+  write(KEYS.settings, s);
+}
 
 export function loadRun() {
   const r = read(KEYS.run, null);
