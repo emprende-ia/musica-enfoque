@@ -1,0 +1,14 @@
+{
+  "name": "Música & Enfoque",
+  "short_name": "Enfoque",
+  "description": "Sesiones de enfoque fijas al reloj con música y binaurales.",
+  "lang": "es",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#15172a",
+  "theme_color": "#15172a",
+  "icons": [
+    { "src": "icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }
+  ]
+}

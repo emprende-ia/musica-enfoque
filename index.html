@@ -1,0 +1,135 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Música & Enfoque</title>
+  <meta name="description" content="Sesiones de enfoque fijas al reloj: 50 minutos de enfoque y 10 de recuperación, con tu música de YouTube Music y tonos binaurales.">
+  <meta name="theme-color" content="#15172a">
+  <link rel="icon" href="icon.svg" type="image/svg+xml">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400;12..96,500;12..96,600&family=Fraunces:opsz,wght@9..144,300;9..144,400;9..144,600&display=swap">
+  <link rel="stylesheet" href="css/styles.css">
+  <script type="module" src="js/app.js"></script>
+</head>
+<body data-mode="idle">
+  <header class="top">
+    <a class="brand" href="./" aria-label="Música & Enfoque, inicio">
+      <svg class="brand-mark" viewBox="0 0 32 32" aria-hidden="true">
+        <circle cx="16" cy="16" r="11" fill="none" stroke="var(--linea)" stroke-width="5"/>
+        <path d="M16 5 A11 11 0 1 1 6.47 10.5" fill="none" stroke="var(--laton)" stroke-width="5"/>
+        <path d="M6.47 10.5 A11 11 0 0 1 16 5" fill="none" stroke="var(--salvia)" stroke-width="5"/>
+      </svg>
+      <span>Música & Enfoque</span>
+    </a>
+    <p class="now"><time id="clock">--:--</time> <span id="today"></span></p>
+  </header>
+
+  <main class="layout">
+    <section class="stage" aria-label="Bloque actual">
+      <div class="dial-wrap">
+        <svg id="dial" class="dial" viewBox="0 0 340 340" aria-hidden="true"></svg>
+        <div class="dial-center" aria-live="polite">
+          <p id="mode-label" class="mode-label">Listo para empezar</p>
+          <p id="countdown" class="countdown">--:--</p>
+          <p id="mode-sub" class="mode-sub"></p>
+        </div>
+      </div>
+
+      <div class="cycle" id="cycle" hidden>
+        <span id="cycle-label" class="cycle-label">Ciclo 1</span>
+        <ol id="pips" class="pips"></ol>
+      </div>
+      <p id="next-line" class="next-line"></p>
+
+      <div class="controls">
+        <div id="idle-controls" class="idle-controls">
+          <p id="idle-hint" class="hint"></p>
+          <div class="btn-row">
+            <button type="button" id="btn-join" class="btn primary"></button>
+            <button type="button" id="btn-next" class="btn"></button>
+          </div>
+        </div>
+        <div id="run-controls" class="btn-row" hidden>
+          <button type="button" id="btn-stop" class="btn">Detener ciclo</button>
+        </div>
+        <label class="switch">
+          <input type="checkbox" id="quiet">
+          <span>Solo alarmas, sin música ni binaurales</span>
+        </label>
+      </div>
+
+      <div id="resume-banner" class="banner" hidden>
+        <p>Tu ciclo sigue en marcha. El navegador necesita un toque para volver a sonar.</p>
+        <button type="button" id="btn-resume" class="btn primary">Activar sonido</button>
+      </div>
+      <div id="blocked-banner" class="banner" hidden>
+        <p id="blocked-text">El navegador pausó la música.</p>
+        <button type="button" id="btn-unblock" class="btn primary">Reproducir música</button>
+      </div>
+    </section>
+
+    <div class="panels">
+      <section class="panel" aria-labelledby="h-schedule">
+        <h2 id="h-schedule">Horario</h2>
+        <p class="lede">Cada enfoque empieza a la hora en punto y cada recuperación a los :50. Después de la sesión 4, la recuperación larga dura 70 minutos y termina en punto.</p>
+        <p id="schedule-note" class="schedule-note"></p>
+        <ol id="schedule" class="schedule"></ol>
+      </section>
+
+      <section class="panel" aria-labelledby="h-audio">
+        <h2 id="h-audio">Música y binaurales</h2>
+        <p class="lede">Pega el enlace de una playlist de YouTube Music para cada momento. La recuperación larga usa la música de recuperación. Para los binaurales usa audífonos.</p>
+        <div id="modes" class="modes"></div>
+      </section>
+
+      <section class="panel" aria-labelledby="h-log">
+        <h2 id="h-log">Tu registro</h2>
+        <dl class="stats">
+          <div><dt>Enfoque hoy</dt><dd id="stat-today">0 min</dd></div>
+          <div><dt>Sesiones completas hoy</dt><dd id="stat-sessions">0</dd></div>
+          <div><dt>Últimos 7 días</dt><dd id="stat-week">0 h</dd></div>
+        </dl>
+        <div id="week" class="week" role="img" aria-label="Minutos de enfoque por día"></div>
+        <h3 class="subhead">Sesiones de hoy</h3>
+        <ol id="today-log" class="today-log"></ol>
+        <button type="button" id="btn-clear" class="btn small ghost">Borrar historial</button>
+      </section>
+
+      <section class="panel" aria-labelledby="h-alarms">
+        <h2 id="h-alarms">Alarmas y avisos</h2>
+        <label class="range wide">
+          <span>Volumen de las alarmas <output id="alarm-out"></output></span>
+          <input type="range" id="alarm-vol" min="0" max="100" step="1">
+        </label>
+        <div class="btn-row wrap">
+          <button type="button" class="btn small" data-test="focus">Probar alarma de enfoque</button>
+          <button type="button" class="btn small" data-test="break">Probar alarma de recuperación</button>
+          <button type="button" class="btn small" data-test="long">Probar recuperación larga</button>
+        </div>
+        <label class="switch">
+          <input type="checkbox" id="notify">
+          <span>Avisarme con una notificación si estoy en otra pestaña</span>
+        </label>
+        <p id="notify-msg" class="field-msg" role="status"></p>
+        <label class="switch">
+          <input type="checkbox" id="wake">
+          <span>Mantener la pantalla encendida durante el ciclo</span>
+        </label>
+        <p id="wake-msg" class="field-msg" role="status"></p>
+        <ul class="tips">
+          <li>Deja esta pestaña abierta. Puedes cambiar a otra: las alarmas siguen sonando.</li>
+          <li>Si cierras la pestaña, el ciclo sigue contando con el reloj. Al volver, toca “Activar sonido”.</li>
+          <li>Los binaurales necesitan audífonos: cada oído recibe un tono distinto.</li>
+        </ul>
+      </section>
+    </div>
+  </main>
+
+  <footer class="foot">
+    <p>Los horarios siguen el reloj de este dispositivo. Tus ajustes e historial se guardan solo en este navegador.</p>
+  </footer>
+</body>
+</html>
