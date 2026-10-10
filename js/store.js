@@ -1,12 +1,14 @@
-/** Persistencia en localStorage: ajustes, ciclo en marcha e historial. */
+/** Persistencia en localStorage: ajustes, presencia, historial y minutos por día. */
+import { keyOf } from './streak.js';
 
 const KEYS = {
   settings: 'mye.settings.v1',
   run: 'mye.run.v1',
   log: 'mye.log.v1',
+  days: 'mye.days.v1',
 };
 
-const KEEP_DAYS = 120;
+const KEEP_DAYS = 120; // detalle de sesiones; los minutos por día (para la racha) se guardan siempre
 
 export const DEFAULTS = Object.freeze({
   focus: { playlist: '', shuffle: true, music: 60, binaural: true, preset: 'beta14', tone: 35, noise: 0 },
@@ -14,6 +16,7 @@ export const DEFAULTS = Object.freeze({
   alarm: 80,
   notify: false,
   wake: false,
+  theme: 'system', // 'system' | 'light' | 'dark'
 });
 
 function read(key, fallback) {
@@ -64,3 +67,18 @@ export function saveLog(log) {
   if (kept.length !== log.length) log.splice(0, log.length, ...kept);
   write(KEYS.log, log);
 }
+
+/** Minutos de enfoque por día. Si aún no existe, se arma con el historial. */
+export function loadDays(log) {
+  const days = read(KEYS.days, null);
+  if (days && typeof days === 'object' && !Array.isArray(days)) return days;
+  const built = {};
+  for (const e of log) {
+    const k = keyOf(new Date(e.start));
+    built[k] = (built[k] || 0) + e.minutes;
+  }
+  write(KEYS.days, built);
+  return built;
+}
+
+export const saveDays = (days) => write(KEYS.days, days);

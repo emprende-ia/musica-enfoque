@@ -38,8 +38,30 @@ Las 24 horas no se dividen exacto en ciclos de 5 horas, así que la madrugada es
 - Tono binaural y ruido marrón por modo, con varias frecuencias.
 - Alarmas distintas: enfoque (campanas ascendentes), recuperación (descendentes) y recuperación larga (gong).
 - Opción "Solo alarmas" para estar presente sin música ni binaurales.
+- Rachas con meta diaria de 4 horas y hasta 2 protectores.
 - Registro: minutos de enfoque de hoy, sesiones completas (45 min o más) y los últimos 7 días.
 - Notificaciones opcionales y opción para mantener la pantalla encendida.
+- Diseño Material 3 Expressive con tema claro y oscuro. Por defecto sigue al sistema.
+
+## Rachas
+
+- **El día cuenta** con **4 horas (240 min) de enfoque**. Se suman también las sesiones parciales.
+- **Protectores:** máximo 2. Ganas 1 por cada 7 días completos dentro de tu racha.
+- **Si un día no llegas a la meta**, se gasta un protector y la racha sigue. Sin protectores, la racha vuelve a 0.
+- **Hoy** no rompe la racha mientras el día no termina.
+
+La racha se calcula con los minutos de enfoque de cada día, que se guardan aparte del historial detallado, así no se pierde aunque el historial se recorte.
+
+## Diseño
+
+Material 3 Expressive: botones que cambian de forma al presionarlos, grupos de botones conectados, sliders y switches de M3, listas segmentadas y un indicador de progreso ondulado en el dial y en la meta diaria. Fuentes: Google Sans Flex y Material Symbols Rounded.
+
+El tema se elige en **Ajustes → Tema** o con el botón de la barra superior: Sistema, Claro u Oscuro. Los colores salen de dos semillas, latón para el enfoque y salvia para la recuperación. Para regenerarlos:
+
+```bash
+npm install
+npm run tokens   # escribe css/tokens.css
+```
 
 ## Publicar en GitHub Pages
 
@@ -98,7 +120,7 @@ python3 -m http.server 8080
 # abre http://localhost:8080
 ```
 
-Pruebas del horario (Node 18 o superior):
+Pruebas del horario y de las rachas (Node 18 o superior):
 
 ```bash
 npm test
@@ -108,14 +130,17 @@ npm test
 
 ```
 index.html            Página
-css/styles.css        Estilos
+css/tokens.css        Colores de Material 3, claro y oscuro (generado)
+css/styles.css        Componentes y diseño
 js/schedule.js        Reglas del horario (lógica pura, con pruebas)
+js/streak.js          Rachas y protectores (lógica pura, con pruebas)
 js/audio.js           Binaurales, ruido marrón y alarmas (Web Audio)
 js/youtube.js         Reproductor de playlists (YouTube IFrame API)
-js/store.js           Ajustes, ciclo e historial en localStorage
+js/store.js           Ajustes, presencia, historial y minutos por día
 js/tick-worker.js     Reloj en segundo plano
 js/app.js             Interfaz y flujo del ciclo
-tests/                Pruebas del horario
+tests/                Pruebas del horario y de las rachas
+tools/                Generador de colores
 ```
 
-Tus ajustes e historial se guardan solo en tu navegador.
+Tus ajustes, historial y racha se guardan solo en tu navegador.

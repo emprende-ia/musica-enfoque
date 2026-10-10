@@ -1,12 +1,14 @@
 import * as S from './schedule.js';
 import { AudioEngine, PRESETS, findPreset } from './audio.js';
 import { PlaylistPlayer, parsePlaylistId, playlistHint } from './youtube.js';
+import { computeStreak, keyOf, dateOf, GOAL_MIN, MAX_SHIELDS } from './streak.js';
 import * as store from './store.js';
 
 const { MIN, HOUR } = S;
 const COMPLETE_MS = 45 * MIN; // una sesión cuenta como completa con 45 min o más de enfoque
 const MODES = ['focus', 'recovery'];
 const ALARM_FOR = { focus: 'focus', break: 'break', long: 'long' };
+const THEME_COLORS = { light: '#fff8f3', dark: '#17130d' };
 
 /* ---------- utilidades ---------- */
 const $ = (sel, root = document) => root.querySelector(sel);
@@ -19,49 +21,84 @@ const mmss = (ms) => {
   const s = Math.max(0, Math.ceil(ms / 1000));
   return `${pad(Math.floor(s / 60))}:${pad(s % 60)}`;
 };
-const dayKey = (t) => {
-  const d = new Date(t);
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
-};
+const dayKey = (t) => keyOf(new Date(t));
 const setText = (el, text) => {
   if (el.textContent !== text) el.textContent = text;
 };
+const icon = (name, cls = '') => `<span class="ms${cls ? ` ${cls}` : ''}" aria-hidden="true">${name}</span>`;
+const lowerFirst = (t) => t.charAt(0).toLowerCase() + t.slice(1);
+const fmtMin = (m) => (m >= 60 ? `${Math.floor(m / 60)} h${m % 60 ? ` ${m % 60} min` : ''}` : `${m} min`);
 const WEEKDAYS = ['dom', 'lun', 'mar', 'mié', 'jue', 'vie', 'sáb'];
 const MONTHS = ['ene', 'feb', 'mar', 'abr', 'may', 'jun', 'jul', 'ago', 'sep', 'oct', 'nov', 'dic'];
-
-const ICONS = {
-  prev: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 5h2v14H6zM20 5v14L9 12z"/></svg>',
-  next: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M16 5h2v14h-2zM4 5l11 7-11 7z"/></svg>',
-  play: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 4l13 8-13 8z"/></svg>',
-  pause: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 4h4v16H6zM14 4h4v16h-4z"/></svg>',
-};
+const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
 
 /* ---------- estado ---------- */
 const audio = new AudioEngine();
-let settings = store.loadSettings();
+const settings = store.loadSettings();
 let run = store.loadRun(); // { startedAt, waitUntil, quiet, current: { start, session, size, focusedMs } }
 const log = store.loadLog(); // [{ start, session, size, minutes, complete }]
+const days = store.loadDays(log); // { 'AAAA-MM-DD': minutos }
 
 let lastKey = null;
 let lastTick = Date.now();
 let lastPersist = 0;
 let lastStats = 0;
 let alarmArmedFor = null;
-let audioPending = !!run; // ciclo recuperado tras recargar: hace falta un toque para sonar
+let audioPending = !!run; // presencia recuperada tras recargar: hace falta un toque para sonar
 let current = null;
 let musicTimer = null;
 let blockedTimer = null;
 let previewTimer = null;
+let snackTimer = null;
 let wakeLock = null;
 let dayRenderKey = '';
 let dialHourKey = '';
+let todayWasDone = null;
 
 audio.setAlarmVolume(settings.alarm / 100);
 
+/* ---------- tema ---------- */
+const THEME_META = {
+  system: { icon: 'brightness_auto', label: 'igual que el sistema' },
+  light: { icon: 'light_mode', label: 'claro' },
+  dark: { icon: 'dark_mode', label: 'oscuro' },
+};
+
+function applyTheme(theme) {
+  const root = document.documentElement;
+  if (theme === 'light' || theme === 'dark') root.dataset.theme = theme;
+  else delete root.dataset.theme;
+  // La barra del navegador sigue al tema elegido
+  document.querySelectorAll('meta[name="theme-color"]').forEach((m) => {
+    const scheme = m.media.includes('dark') ? 'dark' : 'light';
+    m.content = THEME_COLORS[theme === 'system' ? scheme : theme];
+  });
+  const btn = $('#btn-theme');
+  btn.innerHTML = icon(THEME_META[theme].icon);
+  btn.setAttribute('aria-label', `Tema: ${THEME_META[theme].label}. Toca para cambiar.`);
+  btn.title = `Tema: ${THEME_META[theme].label}`;
+  document.querySelectorAll('[data-theme-opt]').forEach((b) => {
+    b.setAttribute('aria-checked', String(b.dataset.themeOpt === theme));
+  });
+}
+
+function setTheme(theme) {
+  settings.theme = theme;
+  store.saveSettings(settings);
+  applyTheme(theme);
+}
+
+/* ---------- sliders: pintar la parte activa ---------- */
+function paintRange(el) {
+  const min = Number(el.min || 0);
+  const max = Number(el.max || 100);
+  el.style.setProperty('--p', `${((Number(el.value) - min) / (max - min)) * 100}%`);
+}
+
 /* ---------- tarjetas de audio ---------- */
 const CARD_COPY = {
-  focus: { title: 'Enfoque', when: 'Suena de :00 a :50 en cada sesión' },
-  recovery: { title: 'Recuperación', when: 'Suena de :50 a :00 y en la recuperación larga' },
+  focus: { title: 'Enfoque', when: 'Suena de :00 a :50 en cada sesión', icon: 'timer' },
+  recovery: { title: 'Recuperación', when: 'Suena de :50 a :00 y en la recuperación larga', icon: 'spa' },
 };
 
 function cardHTML(mode) {
@@ -70,39 +107,45 @@ function cardHTML(mode) {
   return `
   <article class="mode-card" data-mode="${mode}">
     <header class="card-head">
+      <span class="avatar">${icon(c.icon)}</span>
       <h3>${c.title}</h3>
-      <span class="live-tag" hidden>Sonando</span>
+      <span class="chip live-tag" hidden>${icon('graphic_eq')}Sonando</span>
       <p class="card-when">${c.when}</p>
     </header>
     <form class="pl-form" novalidate>
-      <label for="pl-${mode}">Playlist de YouTube Music</label>
       <div class="pl-row">
-        <input id="pl-${mode}" name="playlist" type="text" inputmode="url" autocomplete="off" spellcheck="false" placeholder="Enlace de la playlist">
-        <button class="btn small" type="submit">Cargar</button>
+        <div class="field">
+          <label for="pl-${mode}">Playlist de YouTube Music</label>
+          <input id="pl-${mode}" name="playlist" type="text" inputmode="url" autocomplete="off" spellcheck="false" placeholder="Enlace de la playlist">
+        </div>
+        <button class="btn tonal" type="submit">Cargar</button>
       </div>
       <p class="pl-status" role="status"></p>
     </form>
     <div class="player-frame">
-      <p class="player-empty">Sin playlist. En este momento sonarán solo los binaurales, si los activas.</p>
+      <p class="player-empty">${icon('queue_music')}Sin playlist. En este momento sonarán solo los binaurales, si los activas.</p>
       <div class="player-mount"></div>
     </div>
     <div class="transport" hidden>
-      <button type="button" class="icon-btn" data-act="prev" aria-label="Canción anterior">${ICONS.prev}</button>
-      <button type="button" class="icon-btn" data-act="toggle" aria-label="Reproducir">${ICONS.play}</button>
-      <button type="button" class="icon-btn" data-act="next" aria-label="Siguiente canción">${ICONS.next}</button>
+      <button type="button" class="icon-btn" data-act="prev" aria-label="Canción anterior">${icon('skip_previous')}</button>
+      <button type="button" class="icon-btn filled size-m" data-act="toggle" aria-label="Reproducir">${icon('play_arrow', 'fill')}</button>
+      <button type="button" class="icon-btn" data-act="next" aria-label="Siguiente canción">${icon('skip_next')}</button>
       <p class="now-playing" aria-live="polite"></p>
     </div>
     <div class="fields">
-      <label class="switch"><input type="checkbox" data-k="shuffle"><span>Orden aleatorio</span></label>
+      <label class="switch"><input type="checkbox" role="switch" data-k="shuffle"><span>Orden aleatorio</span></label>
       <label class="range"><span>Volumen de la música <output data-o="music"></output></span><input type="range" min="0" max="100" step="1" data-k="music"></label>
     </div>
     <fieldset class="binaural">
-      <legend>Binaurales</legend>
-      <label class="switch"><input type="checkbox" data-k="binaural"><span>Tono binaural</span></label>
-      <label class="select"><span>Frecuencia</span><select data-k="preset">${opts}</select></label>
+      <legend>${icon('headphones')}Binaurales</legend>
+      <label class="switch"><input type="checkbox" role="switch" data-k="binaural"><span>Tono binaural</span></label>
+      <div class="field select">
+        <label for="preset-${mode}">Frecuencia</label>
+        <select id="preset-${mode}" data-k="preset">${opts}</select>
+      </div>
       <label class="range"><span>Volumen del tono <output data-o="tone"></output></span><input type="range" min="0" max="100" step="1" data-k="tone"></label>
       <label class="range"><span>Ruido marrón de fondo <output data-o="noise"></output></span><input type="range" min="0" max="100" step="1" data-k="noise"></label>
-      <button type="button" class="btn small ghost" data-act="preview">Probar 8 segundos</button>
+      <button type="button" class="btn text" data-act="preview">${icon('headphones')}<span class="label">Probar 8 segundos</span></button>
     </fieldset>
   </article>`;
 }
@@ -138,7 +181,8 @@ function plStatus(mode, text, tone = '') {
 function syncToggle(mode) {
   const btn = $('[data-act="toggle"]', cards[mode]);
   const playing = players[mode].playing;
-  btn.innerHTML = playing ? ICONS.pause : ICONS.play;
+  btn.innerHTML = icon(playing ? 'pause' : 'play_arrow', 'fill');
+  btn.classList.toggle('selected', playing);
   btn.setAttribute('aria-label', playing ? 'Pausar' : 'Reproducir');
 }
 
@@ -156,9 +200,11 @@ function wireCard(card, mode) {
     const k = el.dataset.k;
     if (el.type === 'checkbox') el.checked = !!s[k];
     else el.value = s[k];
+    if (el.type === 'range') paintRange(el);
     showOutput(card, k, s[k]);
     el.addEventListener(el.type === 'range' ? 'input' : 'change', () => {
       s[k] = el.type === 'checkbox' ? el.checked : el.type === 'range' ? Number(el.value) : el.value;
+      if (el.type === 'range') paintRange(el);
       showOutput(card, k, s[k]);
       store.saveSettings(settings);
       onSettingChanged(mode, k);
@@ -237,13 +283,13 @@ function layerFor(mode) {
 function previewLayer(mode, btn) {
   audio.unlock();
   clearTimeout(previewTimer);
-  document.querySelectorAll('[data-act="preview"]').forEach((b) => (b.textContent = 'Probar 8 segundos'));
+  document.querySelectorAll('[data-act="preview"] .label').forEach((l) => (l.textContent = 'Probar 8 segundos'));
   const layer = layerFor(mode);
   audio.setLayer({ ...layer, tone: true, toneVol: Math.max(layer.toneVol, 0.2) }, 0.6);
-  btn.textContent = 'Sonando…';
+  $('.label', btn).textContent = 'Sonando…';
   previewTimer = setTimeout(() => {
     previewTimer = null;
-    btn.textContent = 'Probar 8 segundos';
+    $('.label', btn).textContent = 'Probar 8 segundos';
     restoreLayer();
   }, 8000);
 }
@@ -254,7 +300,7 @@ function restoreLayer() {
   else audio.silence(1.5);
 }
 
-/* ---------- ruteo de audio por bloque ---------- */
+/* ---------- audio por bloque ---------- */
 function activeMode() {
   return run && current ? S.modeOf(current.type) : null;
 }
@@ -286,14 +332,14 @@ function routeAudio(b, musicDelayMs = 0) {
     p.play();
     blockedTimer = setTimeout(() => {
       if (p.wantPlay && !p.playing && activeMode() === mode) {
-        $('#blocked-text').textContent = `El navegador no dejó iniciar la música de ${CARD_COPY[mode].title.toLowerCase()} sola.`;
+        $('#blocked-text').textContent = `El navegador no dejó iniciar sola la música de ${CARD_COPY[mode].title.toLowerCase()}.`;
         $('#blocked-banner').hidden = false;
       }
     }, 5000);
   }, musicDelayMs);
 }
 
-/* ---------- ciclo ---------- */
+/* ---------- presencia ---------- */
 function onEnter(b, live) {
   current = b;
   if (live && b.type !== 'waiting') {
@@ -334,14 +380,12 @@ function finalize() {
   if (!c) return;
   run.current = null;
   if (c.focusedMs >= MIN) {
-    log.push({
-      start: c.start,
-      session: c.session,
-      size: c.size,
-      minutes: Math.round(c.focusedMs / MIN),
-      complete: c.focusedMs >= COMPLETE_MS,
-    });
+    const minutes = Math.round(c.focusedMs / MIN);
+    log.push({ start: c.start, session: c.session, size: c.size, minutes, complete: c.focusedMs >= COMPLETE_MS });
     store.saveLog(log);
+    const k = dayKey(c.start);
+    days[k] = (days[k] || 0) + minutes;
+    store.saveDays(days);
   }
   store.saveRun(run);
   renderStats(true);
@@ -422,85 +466,117 @@ function tick() {
   renderRun(b, now);
 }
 
-/* ---------- render ---------- */
+/* ---------- dial: progreso ondulado de M3 Expressive ---------- */
 const CX = 170;
 const CY = 170;
-const R = 128;
+const R = 124;
+const WAVES = 24; // ondas por vuelta completa
+const AMP = 3.6;
+const SEG_INSET = 4; // grados de separación entre segmentos
+const GAP = 7; // grados entre la parte activa y la pista
 
 function polar(deg, r = R) {
   const a = ((deg - 90) * Math.PI) / 180;
   return [CX + r * Math.cos(a), CY + r * Math.sin(a)];
 }
 
-function arcPath(d0, d1, r = R) {
+function arcPath(d0, d1) {
   if (d1 - d0 >= 359.99) d1 = d0 + 359.98;
-  const [x0, y0] = polar(d0, r);
-  const [x1, y1] = polar(d1, r);
+  const [x0, y0] = polar(d0);
+  const [x1, y1] = polar(d1);
   const large = d1 - d0 > 180 ? 1 : 0;
-  return `M${x0.toFixed(2)} ${y0.toFixed(2)} A${r} ${r} 0 ${large} 1 ${x1.toFixed(2)} ${y1.toFixed(2)}`;
+  return `M${x0.toFixed(2)} ${y0.toFixed(2)} A${R} ${R} 0 ${large} 1 ${x1.toFixed(2)} ${y1.toFixed(2)}`;
 }
 
-const SVGNS = 'http://www.w3.org/2000/svg';
-const dial = { segs: null, fills: null, bead: null, parts: [] };
+function wavyPath(d0, d1, phase) {
+  const pts = [];
+  const step = 0.75;
+  const point = (d) => {
+    const taper = Math.min(1, (d - d0) / 10, (d1 - d) / 10);
+    const r = R + AMP * Math.max(0, taper) * Math.sin(((d * Math.PI) / 180) * WAVES + phase);
+    const [x, y] = polar(d, r);
+    return `${x.toFixed(2)} ${y.toFixed(2)}`;
+  };
+  for (let d = d0; d < d1; d += step) pts.push(point(d));
+  pts.push(point(d1));
+  return `M${pts.join('L')}`;
+}
+
+const dial = { svg: null, tracks: null, actives: null, parts: [], top: 0, muted: true };
 
 function buildDial() {
   const svg = $('#dial');
-  const ticks = [];
-  for (let m = 0; m < 60; m++) {
-    const major = m % 5 === 0;
+  const dots = [];
+  for (let m = 0; m < 60; m += 5) {
     const mark = m === 0 || m === 50;
-    const [x0, y0] = polar(m * 6, R + 15);
-    const [x1, y1] = polar(m * 6, R + (mark ? 25 : major ? 21 : 18));
-    ticks.push(`<line class="tick${major ? ' major' : ''}${mark ? ' mark' : ''}" x1="${x0.toFixed(2)}" y1="${y0.toFixed(2)}" x2="${x1.toFixed(2)}" y2="${y1.toFixed(2)}"/>`);
+    const [x, y] = polar(m * 6, R + 21);
+    dots.push(`<circle class="tick${mark ? ' mark' : ''}" cx="${x.toFixed(2)}" cy="${y.toFixed(2)}" r="${mark ? 3 : 2}"/>`);
   }
-  const [lx0, ly0] = polar(0, R + 37);
-  const [lx50, ly50] = polar(300, R + 37);
+  const [lx0, ly0] = polar(0, R + 38);
+  const [lx50, ly50] = polar(300, R + 38);
   svg.innerHTML = `
-    <circle class="track" cx="${CX}" cy="${CY}" r="${R}"/>
-    <g class="ticks">${ticks.join('')}</g>
+    <g>${dots.join('')}</g>
     <text class="dial-label" x="${lx0.toFixed(1)}" y="${(ly0 + 4).toFixed(1)}" text-anchor="middle">:00</text>
     <text class="dial-label" x="${lx50.toFixed(1)}" y="${(ly50 + 4).toFixed(1)}" text-anchor="middle">:50</text>
-    <g class="segs"></g>
-    <g class="fills"></g>
-    <g class="bead"><circle cx="${CX}" cy="${CY - R}" r="8"/></g>`;
-  dial.segs = $('.segs', svg);
-  dial.fills = $('.fills', svg);
-  dial.bead = $('.bead', svg);
+    <g class="tracks"></g>
+    <g class="actives"></g>`;
+  dial.svg = svg;
+  dial.tracks = $('.tracks', svg);
+  dial.actives = $('.actives', svg);
 }
 
-/** Dibuja los segmentos de la hora de reloj actual. `blocks` ya recortados a esta hora. */
-function drawDialHour(hourStart, blocks, muted) {
+function drawDialHour(hourStart, blocks) {
   dial.parts = blocks.map((b) => {
     const d0 = Math.max(0, ((b.start - hourStart) / HOUR) * 360);
     const d1 = Math.min(360, ((b.end - hourStart) / HOUR) * 360);
-    const gap = d1 - d0 < 359 ? 1 : 0;
-    return { d0: d0 + gap, d1: d1 - gap, cls: S.modeOf(b.type) || 'focus' };
+    const full = d1 - d0 >= 359;
+    return { d0: full ? 0 : d0 + SEG_INSET, d1: full ? 360 : d1 - SEG_INSET, full, cls: S.modeOf(b.type) || 'focus' };
   });
-  dial.segs.innerHTML = dial.parts
-    .map((p) => `<path class="seg ${p.cls}${muted ? ' muted' : ''}" d="${arcPath(p.d0, p.d1)}"/>`)
-    .join('');
-  dial.fills.innerHTML = muted ? '' : dial.parts.map((p) => `<path class="fill ${p.cls}" d=""/>`).join('');
+  dial.tracks.innerHTML = dial.parts.map((p) => `<path class="track ${p.cls}" d=""/>`).join('');
+  dial.actives.innerHTML = dial.parts.map((p) => `<path class="active ${p.cls}" d=""/>`).join('');
 }
 
-function updateDial(now, hourStart, showFill) {
-  const deg = ((now - hourStart) / HOUR) * 360;
-  dial.bead.setAttribute('transform', `rotate(${deg.toFixed(2)} ${CX} ${CY})`);
-  if (!showFill) return;
-  const paths = dial.fills.children;
+function updateDial(now) {
+  if (!dial.parts.length) return;
+  const deg = ((now - dial.top) / HOUR) * 360;
+  const animate = !dial.muted && !reduceMotion.matches;
+  const phase = animate ? -(now / 1000) * 2.4 : 0;
+  const tracks = dial.tracks.children;
+  const actives = dial.actives.children;
   dial.parts.forEach((p, i) => {
-    const end = Math.min(p.d1, deg);
-    paths[i]?.setAttribute('d', end > p.d0 + 0.2 ? arcPath(p.d0, end) : '');
+    const e = Math.min(p.d1, Math.max(p.d0, deg));
+    const hasActive = e > p.d0 + 0.5;
+    actives[i].setAttribute('d', hasActive ? wavyPath(p.d0, e, phase) : '');
+    let t0 = hasActive ? e + GAP : p.d0;
+    let t1 = p.full && hasActive ? 360 - GAP : p.d1;
+    if (p.full && !hasActive) t1 = 360;
+    tracks[i].setAttribute('d', t1 - t0 > 0.5 ? arcPath(t0, t1) : '');
   });
 }
 
-function renderClock(now) {
-  const d = new Date(now);
-  setText($('#clock'), hm(now));
-  setText($('#today'), `${WEEKDAYS[d.getDay()]} ${d.getDate()} ${MONTHS[d.getMonth()]}`);
+function renderDialFor(now, muted) {
+  const top = S.startOfHour(now);
+  const key = `${top}`;
+  if (dialHourKey !== key) {
+    dialHourKey = key;
+    drawDialHour(top, S.blocksBetween(top, top + HOUR));
+  }
+  dial.top = top;
+  dial.muted = muted;
+  dial.svg.classList.toggle('muted', muted);
+  if (muted || reduceMotion.matches) updateDial(now);
 }
 
-const lowerFirst = (t) => t.charAt(0).toLowerCase() + t.slice(1);
+// La onda se mueve con requestAnimationFrame (solo con la pestaña visible)
+let lastFrame = 0;
+function frame(ts) {
+  requestAnimationFrame(frame);
+  if (dial.muted || reduceMotion.matches || ts - lastFrame < 33) return;
+  lastFrame = ts;
+  updateDial(Date.now());
+}
 
+/* ---------- textos del bloque ---------- */
 function blockLabel(b) {
   if (b.type === 'focus') return `Enfoque, sesión ${b.sessionInCycle} de ${b.cycleSize}`;
   if (b.type === 'long') return b.lunch ? 'Recuperación larga: comida' : 'Recuperación larga';
@@ -512,14 +588,10 @@ function nextLine(b) {
   return `Después: ${lowerFirst(blockLabel(nb))}, de ${hm(nb.start)} a ${hm(nb.end)}.`;
 }
 
-function renderDialFor(now, muted) {
-  const top = S.startOfHour(now);
-  const hourKey = `${muted ? 'm' : 'r'}:${top}`;
-  if (dialHourKey !== hourKey) {
-    dialHourKey = hourKey;
-    drawDialHour(top, S.blocksBetween(top, top + HOUR), muted);
-  }
-  updateDial(now, top, !muted);
+function renderClock(now) {
+  const d = new Date(now);
+  setText($('#clock'), hm(now));
+  setText($('#today'), `${WEEKDAYS[d.getDay()]} ${d.getDate()} ${MONTHS[d.getMonth()]}`);
 }
 
 function renderIdle(now) {
@@ -536,15 +608,13 @@ function renderIdle(now) {
   $('#idle-controls').hidden = false;
   $('#run-controls').hidden = true;
 
-  const join = $('#btn-join');
   const next = $('#btn-next');
-  setText(join, 'Comenzar a estar presente');
   if (opt.kind === 'now') {
     next.hidden = true;
-    setText($('#idle-hint'), `Es hora en punto: el enfoque empieza en cuanto presiones.`);
+    setText($('#idle-hint'), 'Es hora en punto: el enfoque empieza en cuanto presiones.');
   } else if (opt.kind === 'choose') {
     next.hidden = false;
-    setText(next, `Esperar al enfoque de las ${hm(opt.nextFocus)}`);
+    setText($('.label', next), `Esperar al enfoque de las ${hm(opt.nextFocus)}`);
     next.dataset.wait = opt.nextFocus;
     setText($('#idle-hint'), `El enfoque de las ${hm(b.start)} ya empezó. Si comienzas ahora, te quedan ${Math.ceil(opt.focusLeftMs / MIN)} min de enfoque.`);
   } else {
@@ -567,7 +637,7 @@ function renderRun(b, now) {
   const left = mmss(b.end - now);
   setText($('#mode-label'), label);
   setText($('#countdown'), left);
-  let sub = '';
+  let sub;
   if (b.type === 'waiting') sub = `Tu enfoque empieza a las ${hm(b.end)}`;
   else if (b.type === 'focus') sub = `Hasta las ${hm(b.end)}`;
   else sub = `El enfoque vuelve a las ${hm(b.end)}`;
@@ -606,38 +676,50 @@ function renderPips(b) {
   }
 }
 
-/** Las 24 horas de hoy: qué pasa en cada hora, con la actual marcada. */
+/** Las 24 horas de hoy, agrupadas por bloque, con la hora actual marcada. */
+const GROUP_OF = (h) => (h === 0 ? 'Medianoche' : S.PLAN[h].cycleName);
+
+function hourRow(h) {
+  let what;
+  let note;
+  let bar;
+  if (h.role === 'long') {
+    what = h.lunch ? `${icon('restaurant')}Recuperación larga: comida` : 'Recuperación larga';
+    note = `${hm(h.start - 10 * MIN)}–${hm(h.end)}`;
+    bar = '<i class="seg recovery" style="flex:60"><b></b></i>';
+  } else {
+    what = `Enfoque, sesión ${h.sessionInCycle} de ${h.cycleSize}`;
+    const at50 = hm(h.start + 50 * MIN);
+    const lunchNext = S.PLAN[(h.hour + 1) % 24].lunch;
+    note = h.endsInLong ? `${at50} recuperación larga${lunchNext ? ' (comida)' : ''}` : `${at50} recuperación`;
+    bar = '<i class="seg focus" style="flex:50"><b></b></i><i class="seg recovery" style="flex:10"><b></b></i>';
+  }
+  return `
+    <li class="hr ${h.role}${h.role === 'long' && h.lunch ? ' lunch' : ''}" data-start="${h.start}" data-end="${h.end}" data-role="${h.role}">
+      <span class="hr-time">${hm(h.start)}</span>
+      <span class="hr-text"><span class="hr-what">${what}</span><span class="hr-note">${note}</span></span>
+      <span class="hr-bar" aria-hidden="true">${bar}</span>
+    </li>`;
+}
+
 function renderDay(now) {
   const list = $('#day');
   const key = dayKey(now);
   if (key !== dayRenderKey) {
     dayRenderKey = key;
-    const rows = [];
+    const groups = [];
     for (const h of S.dayHours(now)) {
-      if (h.role === 'session' && h.sessionInCycle === 1) {
-        rows.push(`<li class="hr-group">${h.cycleName}<span>${h.cycleSize} sesiones</span></li>`);
-      }
-      let what;
-      let note;
-      let bar;
-      if (h.role === 'long') {
-        what = h.lunch ? 'Recuperación larga: comida' : 'Recuperación larga';
-        note = `${hm(h.start - 10 * MIN)}–${hm(h.end)}`;
-        bar = '<i class="seg recovery" style="flex:60"><b></b></i>';
-      } else {
-        what = `Enfoque, sesión ${h.sessionInCycle} de ${h.cycleSize}`;
-        const at50 = hm(h.start + 50 * MIN);
-        note = h.endsInLong ? `${at50} recuperación larga${PLAN_LUNCH(h) ? ' (comida)' : ''}` : `${at50} recuperación`;
-        bar = '<i class="seg focus" style="flex:50"><b></b></i><i class="seg recovery" style="flex:10"><b></b></i>';
-      }
-      rows.push(`
-        <li class="hr ${h.role}${h.role === 'long' && h.lunch ? ' lunch' : ''}" data-start="${h.start}" data-end="${h.end}" data-role="${h.role}">
-          <span class="hr-time">${hm(h.start)}</span>
-          <span class="hr-text"><span class="hr-what">${what}</span><span class="hr-note">${note}</span></span>
-          <span class="hr-bar" aria-hidden="true">${bar}</span>
-        </li>`);
+      const name = GROUP_OF(h.hour);
+      if (!groups.length || groups.at(-1).name !== name) groups.push({ name, hours: [] });
+      groups.at(-1).hours.push(h);
     }
-    list.innerHTML = rows.join('');
+    list.innerHTML = groups
+      .map((g) => {
+        const sessions = g.hours.filter((h) => h.role === 'session').length;
+        const count = sessions ? `<span>${sessions} ${sessions === 1 ? 'sesión' : 'sesiones'}</span>` : '';
+        return `<li class="day-group"><h3>${g.name}${count}</h3><ol class="seg-list">${g.hours.map(hourRow).join('')}</ol></li>`;
+      })
+      .join('');
   }
   for (const li of list.querySelectorAll('.hr')) {
     const s = Number(li.dataset.start);
@@ -657,8 +739,127 @@ function renderDay(now) {
   }
 }
 
-/** ¿La recuperación larga que sigue a esta hora es la de la comida? */
-const PLAN_LUNCH = (h) => S.PLAN[(h.hour + 1) % 24].lunch;
+/* ---------- racha y registro ---------- */
+function renderGoalBar(fraction) {
+  const svg = $('#goal-bar');
+  const W = 300;
+  const y = 8;
+  const f = Math.max(0, Math.min(1, fraction));
+  const end = f * W;
+  const parts = [];
+  if (end > 2) {
+    // parte activa ondulada, como el indicador lineal de M3 Expressive
+    const pts = [];
+    for (let x = 4; x < end - 2; x += 2) {
+      const taper = Math.min(1, (x - 4) / 12, (end - 2 - x) / 12);
+      pts.push(`${x.toFixed(1)} ${(y + 3 * Math.max(0, taper) * Math.sin(x / 6)).toFixed(2)}`);
+    }
+    pts.push(`${(end - 2).toFixed(1)} ${y}`);
+    parts.push(`<path class="g-active" d="M${pts.join('L')}" fill="none" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/>`);
+  }
+  const t0 = end > 2 ? end + 10 : 4;
+  if (t0 < W - 4) parts.push(`<path class="g-track" d="M${t0.toFixed(1)} ${y}L${W - 4} ${y}" stroke-width="6" stroke-linecap="round"/>`);
+  if (f < 1) parts.push(`<circle class="g-stop" cx="${W - 4}" cy="${y}" r="2"/>`);
+  const html = parts.join('');
+  if (svg.dataset.html !== html) {
+    svg.innerHTML = html;
+    svg.dataset.html = html;
+  }
+}
+
+function showSnackbar(html) {
+  const bar = $('#snackbar');
+  bar.innerHTML = html;
+  bar.hidden = false;
+  clearTimeout(snackTimer);
+  snackTimer = setTimeout(() => (bar.hidden = true), 6000);
+}
+
+const STATUS_ICON = {
+  done: 'check',
+  'done-shield': 'check',
+  'today-done': 'check',
+  protected: 'shield',
+  broken: 'close',
+};
+
+function renderStreak(now, todayMin) {
+  const today = dayKey(now);
+  const st = computeStreak(days, today, todayMin, 14);
+
+  // celebrar cuando hoy cruza la meta estando presente
+  if (todayWasDone === false && st.todayDone) {
+    showSnackbar(`${icon('local_fire_department', 'fill')}Meta de 4 horas cumplida. Tu racha va en ${st.streak} ${st.streak === 1 ? 'día' : 'días'}.`);
+  }
+  todayWasDone = st.todayDone;
+
+  const cold = st.streak === 0;
+  $('.streak-card').classList.toggle('cold', cold);
+  $('.streak-card').classList.toggle('done', st.todayDone);
+  setText($('#streak-n'), String(st.streak));
+  setText($('#streak-unit'), st.streak === 1 ? 'día de racha' : 'días de racha');
+  setText(
+    $('#streak-today-text'),
+    st.todayDone
+      ? `Hoy: ${fmtMin(Math.round(todayMin))} de enfoque. Meta cumplida.`
+      : `Hoy: ${fmtMin(Math.round(todayMin))} de 4 h. Te faltan ${fmtMin(Math.ceil(st.leftMin))}.`,
+  );
+  renderGoalBar(todayMin / GOAL_MIN);
+
+  const slots = [];
+  for (let i = 0; i < MAX_SHIELDS; i++) {
+    const on = i < st.shields;
+    slots.push(`<span class="slot${on ? ' on' : ''}" aria-hidden="true">${icon('shield', on ? 'fill' : '')}</span>`);
+  }
+  const slotsHTML = slots.join('');
+  const slotsEl = $('#shield-slots');
+  if (slotsEl.dataset.html !== slotsHTML) {
+    slotsEl.innerHTML = slotsHTML;
+    slotsEl.dataset.html = slotsHTML;
+  }
+  const shieldWord = st.shields === 1 ? 'protector' : 'protectores';
+  let shieldText = `${st.shields} de ${MAX_SHIELDS} ${shieldWord}.`;
+  if (st.daysToShield != null && !cold) shieldText += ` El siguiente en ${st.daysToShield} ${st.daysToShield === 1 ? 'día completo' : 'días completos'}.`;
+  if (cold) shieldText += ' Completa 7 días seguidos para ganar uno.';
+  setText($('#shield-text'), shieldText);
+
+  // chip de la barra superior
+  const chip = $('#streak-chip');
+  chip.classList.toggle('cold', cold);
+  setText($('#streak-chip-n'), String(st.streak));
+  chip.setAttribute('aria-label', `Racha de ${st.streak} ${st.streak === 1 ? 'día' : 'días'}, ${st.shields} ${shieldWord}`);
+  const chipShields = Array.from({ length: st.shields }, () => icon('shield', 'fill')).join('');
+  const chipEl = $('#chip-shields');
+  if (chipEl.dataset.html !== chipShields) {
+    chipEl.innerHTML = chipShields;
+    chipEl.dataset.html = chipShields;
+  }
+
+  // últimos 14 días
+  const LABEL = {
+    done: 'completo',
+    'done-shield': 'completo, ganaste un protector',
+    'today-done': 'hoy, completo',
+    today: 'hoy, en curso',
+    protected: 'protegido',
+    broken: 'racha perdida',
+    missed: 'sin completar',
+    none: 'sin registro',
+  };
+  const daysHTML = st.history
+    .map((h) => {
+      const d = dateOf(h.key);
+      const cls = h.status === 'today-done' ? 'done is-today' : h.status.startsWith('done') ? 'done' : h.status === 'today' ? 'today is-today' : h.status;
+      const ic = STATUS_ICON[h.status] ? icon(STATUS_ICON[h.status], h.status === 'protected' ? 'fill' : '') : '';
+      return `<li class="${cls}" title="${WEEKDAYS[d.getDay()]} ${d.getDate()}: ${fmtMin(Math.round(h.minutes))}"><span class="dot" aria-label="${WEEKDAYS[d.getDay()]} ${d.getDate()}, ${LABEL[h.status]}">${ic}</span>${WEEKDAYS[d.getDay()].charAt(0).toUpperCase()}</li>`;
+    })
+    .join('');
+  const daysEl = $('#streak-days');
+  if (daysEl.dataset.html !== daysHTML) {
+    daysEl.innerHTML = daysHTML;
+    daysEl.dataset.html = daysHTML;
+  }
+}
 
 function renderStats(force = false) {
   const now = Date.now();
@@ -667,39 +868,39 @@ function renderStats(force = false) {
   const today = dayKey(now);
   const inProgress = run?.current && dayKey(run.current.start) === today ? run.current.focusedMs / MIN : 0;
   const todays = log.filter((e) => dayKey(e.start) === today).sort((a, b) => a.start - b.start);
-  const todayMin = Math.round(todays.reduce((s, e) => s + e.minutes, 0) + inProgress);
-  setText($('#stat-today'), `${todayMin} min`);
+  const todayMin = (days[today] || 0) + inProgress;
+  setText($('#stat-today'), fmtMin(Math.round(todayMin)));
   setText($('#stat-sessions'), String(todays.filter((e) => e.complete).length));
 
-  // últimos 7 días
-  const days = [];
+  renderStreak(now, todayMin);
+
+  // últimos 7 días, con la línea de la meta de 4 horas
+  const week = [];
   for (let i = 6; i >= 0; i--) {
     const d = new Date(now);
     d.setHours(12, 0, 0, 0);
     d.setDate(d.getDate() - i);
-    days.push({ key: dayKey(d.getTime()), label: WEEKDAYS[d.getDay()], min: 0, isToday: i === 0 });
+    const k = keyOf(d);
+    const min = Math.round((days[k] || 0) + (i === 0 ? inProgress : 0));
+    week.push({ label: WEEKDAYS[d.getDay()], min, isToday: i === 0 });
   }
-  for (const e of log) {
-    const day = days.find((x) => x.key === dayKey(e.start));
-    if (day) day.min += e.minutes;
-  }
-  days[6].min += Math.round(inProgress);
-  const weekMin = days.reduce((s, d) => s + d.min, 0);
+  const weekMin = week.reduce((s, d) => s + d.min, 0);
   setText($('#stat-week'), `${(weekMin / 60).toFixed(1).replace('.0', '')} h`);
-  const max = Math.max(200, ...days.map((d) => d.min));
-  const weekHTML = days
+  const max = Math.max(GOAL_MIN * 1.25, ...week.map((d) => d.min));
+  const goalPct = ((GOAL_MIN / max) * 100).toFixed(1);
+  const weekHTML = week
     .map((d) => `
-      <div class="day${d.isToday ? ' today' : ''}">
+      <div class="day${d.isToday ? ' today' : ''}${d.min >= GOAL_MIN ? ' goal' : ''}">
         <span class="day-val">${d.min ? d.min : ''}</span>
-        <span class="day-bar"><i style="height:${((d.min / max) * 100).toFixed(1)}%"></i></span>
+        <span class="day-bar"><i style="height:${((d.min / max) * 100).toFixed(1)}%"></i><span class="goal-line" style="bottom:${goalPct}%"></span></span>
         <span class="day-name">${d.label}</span>
       </div>`)
     .join('');
-  const week = $('#week');
-  if (week.dataset.html !== weekHTML) {
-    week.innerHTML = weekHTML;
-    week.dataset.html = weekHTML;
-    week.setAttribute('aria-label', `Minutos de enfoque por día: ${days.map((d) => `${d.label} ${d.min}`).join(', ')}`);
+  const weekEl = $('#week');
+  if (weekEl.dataset.html !== weekHTML) {
+    weekEl.innerHTML = weekHTML;
+    weekEl.dataset.html = weekHTML;
+    weekEl.setAttribute('aria-label', `Minutos de enfoque por día, meta de 240: ${week.map((d) => `${d.label} ${d.min}`).join(', ')}`);
   }
 
   const items = todays.map((e) => `
@@ -750,22 +951,22 @@ async function updateWakeLock() {
 /* ---------- controles generales ---------- */
 function armTwoStep(btn, label, confirmLabel, action) {
   let armed = null;
+  const text = $('.label', btn);
+  const reset = () => {
+    armed = null;
+    text.textContent = label;
+    btn.classList.remove('confirm');
+  };
   btn.addEventListener('click', () => {
     if (armed) {
       clearTimeout(armed);
-      armed = null;
-      btn.textContent = label;
-      btn.classList.remove('danger');
+      reset();
       action();
       return;
     }
-    btn.textContent = confirmLabel;
-    btn.classList.add('danger');
-    armed = setTimeout(() => {
-      armed = null;
-      btn.textContent = label;
-      btn.classList.remove('danger');
-    }, 4000);
+    text.textContent = confirmLabel;
+    btn.classList.add('confirm');
+    armed = setTimeout(reset, 4000);
   });
 }
 
@@ -773,9 +974,12 @@ function wireGlobal() {
   $('#btn-join').addEventListener('click', () => start(null));
   $('#btn-next').addEventListener('click', (e) => start(Number(e.currentTarget.dataset.wait)));
   armTwoStep($('#btn-stop'), 'Dejar de estar presente', 'Toca otra vez para confirmar', stop);
-  armTwoStep($('#btn-clear'), 'Borrar historial', 'Toca otra vez para borrar todo', () => {
+  armTwoStep($('#btn-clear'), 'Borrar historial', 'Toca otra vez: se borra también la racha', () => {
     log.splice(0, log.length);
     store.saveLog(log);
+    for (const k of Object.keys(days)) delete days[k];
+    store.saveDays(days);
+    todayWasDone = null;
     renderStats(true);
   });
 
@@ -795,11 +999,18 @@ function wireGlobal() {
     $('#blocked-banner').hidden = true;
   });
 
+  // tema
+  const order = ['system', 'light', 'dark'];
+  $('#btn-theme').addEventListener('click', () => setTheme(order[(order.indexOf(settings.theme) + 1) % order.length]));
+  document.querySelectorAll('[data-theme-opt]').forEach((b) => b.addEventListener('click', () => setTheme(b.dataset.themeOpt)));
+
   const vol = $('#alarm-vol');
   vol.value = settings.alarm;
+  paintRange(vol);
   $('#alarm-out').textContent = `${settings.alarm}%`;
   vol.addEventListener('input', () => {
     settings.alarm = Number(vol.value);
+    paintRange(vol);
     $('#alarm-out').textContent = `${settings.alarm}%`;
     audio.setAlarmVolume(settings.alarm / 100);
     store.saveSettings(settings);
@@ -860,10 +1071,12 @@ function startTicker() {
   } catch {
     setInterval(tick, 250);
   }
+  requestAnimationFrame(frame);
 }
 
 /* ---------- arranque ---------- */
 function init() {
+  applyTheme(settings.theme);
   buildDial();
   buildCards();
   wireGlobal();
