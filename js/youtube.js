@@ -95,6 +95,8 @@ export class PlaylistPlayer {
     this.skips = 0;
     this.fadeTimer = null;
     this.verifyTimer = null;
+    this.priming = false;
+    this.primeTimer = null;
   }
 
   get loaded() {
@@ -172,6 +174,16 @@ export class PlaylistPlayer {
   }
 
   #onState(s) {
+    if (s === PLAYING && this.priming) {
+      this.#endPrime();
+      this.hooks.onState?.(s);
+      return;
+    }
+    if (s === PLAYING && !this.wantPlay && !this.fadeTimer) {
+      // Se le dio play desde el propio reproductor de YouTube
+      this.wantPlay = true;
+      this.hooks.onManualPlay?.();
+    }
     if (s === PLAYING) {
       this.skips = 0;
       this.player.setLoop(true);
@@ -194,9 +206,42 @@ export class PlaylistPlayer {
     this.hooks.onError?.(ERRORS[code] || `YouTube devolvió el error ${code}.`);
   }
 
+  /**
+   * "Despierta" el reproductor durante un toque del usuario: lo reproduce en silencio un
+   * instante y lo pausa. Así los navegadores (sobre todo en celular) dejan que suene
+   * después solo, cuando cambia el bloque.
+   */
+  prime() {
+    if (!this.ready || this.playing || this.priming || this.wantPlay) return;
+    this.priming = true;
+    try {
+      this.player.mute();
+      this.player.playVideo();
+    } catch {
+      this.priming = false;
+      return;
+    }
+    clearTimeout(this.primeTimer);
+    this.primeTimer = setTimeout(() => this.#endPrime(), 1500);
+  }
+
+  #endPrime() {
+    if (!this.priming) return;
+    this.priming = false;
+    clearTimeout(this.primeTimer);
+    if (!this.wantPlay) this.player.pauseVideo();
+    this.player.unMute();
+    this.player.setVolume(this.volume);
+  }
+
   play() {
     this.wantPlay = true;
     if (!this.ready) return;
+    if (this.priming) {
+      this.priming = false;
+      clearTimeout(this.primeTimer);
+      this.player.unMute();
+    }
     this.#cancelFade();
     this.player.setVolume(this.volume);
     if (this.shuffle && !this.shuffled) {
@@ -214,13 +259,14 @@ export class PlaylistPlayer {
   pause() {
     this.wantPlay = false;
     this.#cancelFade();
+    if (this.priming) this.#endPrime();
     if (this.ready) this.player.pauseVideo();
   }
 
   /** Baja el volumen poco a poco y pausa. Con la pestaña oculta pausa de inmediato. */
   fadeOutPause(ms = 1500) {
     this.wantPlay = false;
-    if (!this.ready) return;
+    if (!this.ready || this.priming) return;
     const st = this.player.getPlayerState();
     if ((st !== PLAYING && st !== BUFFERING) || ms <= 0 || document.hidden) {
       this.#cancelFade();

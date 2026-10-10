@@ -165,6 +165,10 @@ function buildCards() {
       onLoaded: (n) => plStatus(mode, `Playlist lista: ${n} ${n === 1 ? 'canción' : 'canciones'}.`),
       onError: (msg) => plStatus(mode, msg, 'error'),
       onTitle: (title) => setText($('.now-playing', card), title),
+      onManualPlay: () => {
+        if (!run) startFromMusic();
+        else pauseOthers(mode);
+      },
       onState: () => {
         syncToggle(mode);
         if (players[mode].playing && activeMode() === mode) $('#blocked-banner').hidden = true;
@@ -234,7 +238,14 @@ function wireCard(card, mode) {
     const p = players[mode];
     if (act === 'prev') p.prev();
     if (act === 'next') p.next();
-    if (act === 'toggle') p.toggle();
+    if (act === 'toggle') {
+      if (!p.playing && !run) {
+        startFromMusic();
+        return;
+      }
+      if (!p.playing) pauseOthers(mode);
+      p.toggle();
+    }
     if (act === 'preview') previewLayer(mode, e.target.closest('button'));
   });
 }
@@ -418,6 +429,24 @@ function start(waitUntil = null) {
   alarmArmedFor = null;
   if (!waitUntil && S.blockAt(Date.now()).type === 'focus') audio.playAlarm('focus');
   tick();
+  primePlayers();
+}
+
+/** Durante un toque, deja listos los reproductores que no están sonando para que el cambio de bloque suene solo. */
+function primePlayers() {
+  const mode = activeMode();
+  for (const m of MODES) if (m !== mode && players[m].loaded) players[m].prime();
+}
+
+/** Pausa la música de los otros modos (para no oír dos playlists a la vez). */
+function pauseOthers(mode) {
+  for (const m of MODES) if (m !== mode) players[m].fadeOutPause(600);
+}
+
+/** Dar play a la música sin estar presente = empezar a estar presente. */
+function startFromMusic() {
+  start(null);
+  showSnackbar(`${icon('self_improvement')}Ahora estás presente. El sonido cambia solo a los :50 y a las :00.`);
 }
 
 /** Bloque vigente para quien está presente (o la espera hasta su enfoque). */
@@ -458,6 +487,7 @@ function resumeAudio() {
   audioPending = false;
   $('#resume-banner').hidden = true;
   if (current) routeAudio(current, 0);
+  primePlayers();
 }
 
 /* ---------- reloj principal ---------- */
@@ -1177,6 +1207,14 @@ function wireGlobal() {
   });
 
   $('#btn-resume').addEventListener('click', resumeAudio);
+  // Cualquier toque o tecla devuelve el sonido (tras recargar, el navegador exige una interacción)
+  const onGesture = (e) => {
+    audio.unlock();
+    if (run && audioPending && !e.target.closest?.('#btn-stop')) resumeAudio();
+  };
+  document.addEventListener('pointerdown', onGesture, true);
+  document.addEventListener('keydown', onGesture, true);
+
   $('#btn-unblock').addEventListener('click', () => {
     const mode = activeMode();
     if (mode) players[mode].play();

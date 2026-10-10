@@ -30,6 +30,8 @@ Las 24 horas no se dividen exacto en ciclos de 5 horas, así que la madrugada es
 
 **Estar presente:** la app sigue el reloj todo el tiempo. "Comenzar a estar presente" activa la música, los binaurales, las alarmas y el registro en el bloque que toca. Si el enfoque ya empezó, puedes entrar con el tiempo que queda o esperar al siguiente enfoque. "Dejar de estar presente" lo apaga todo y guarda el tiempo ya contado.
 
+Mientras estás presente, el sonido cambia solo: a los :50 suenan la alarma, la música y los binaurales de recuperación, y a las :00 los de enfoque. Si das play a cualquiera de las dos músicas sin estar presente, la app empieza a estar presente y sigue el horario. Si recargas la página, cualquier toque devuelve el sonido.
+
 ## Qué incluye
 
 - Dial de la hora actual: enfoque y recuperación marcados en el reloj, con el avance en vivo.

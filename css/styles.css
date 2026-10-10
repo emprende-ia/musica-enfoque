@@ -350,6 +350,15 @@ select { font: inherit; color: inherit; }
   line-height: 1.25rem;
 }
 
+.presence-note {
+  max-width: 34ch;
+  margin: -8px 0 0;
+  text-align: center;
+  color: var(--md-sys-color-on-surface-variant);
+  font-size: 0.75rem;
+  line-height: 1rem;
+}
+
 .banner {
   display: grid;
   justify-items: center;
