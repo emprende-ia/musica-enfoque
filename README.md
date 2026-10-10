@@ -42,6 +42,7 @@ Las 24 horas no se dividen exacto en ciclos de 5 horas, así que la madrugada es
 - Registro: minutos de enfoque de hoy, sesiones completas (45 min o más) y los últimos 7 días.
 - Notificaciones opcionales y opción para mantener la pantalla encendida.
 - Diseño Material 3 Expressive con tema claro y oscuro. Por defecto sigue al sistema.
+- Se instala como app (PWA) con su ícono: un cronómetro rojo que marca 50 min de enfoque y 10 de recuperación.
 
 ## Rachas
 
@@ -166,6 +167,7 @@ js/tick-worker.js     Reloj en segundo plano
 js/app.js             Interfaz y flujo del ciclo
 tests/                Pruebas del horario y de las rachas
 tools/                Generador de colores
+icons/                Ícono de la app (cronómetro rojo): SVG, PNG para instalar como app y favicon
 ```
 
 Tus ajustes, historial y racha se guardan en tu navegador y, si inicias sesión, también en tu cuenta.

@@ -943,7 +943,7 @@ function notify(b) {
       ? `Sesión ${b.sessionInCycle} de ${b.cycleSize}, hasta las ${hm(b.end)}.`
       : `El enfoque vuelve a las ${hm(b.end)}.`;
   try {
-    new Notification(blockLabel(b), { body, tag: 'musica-enfoque', icon: 'icon.svg', silent: true });
+    new Notification(blockLabel(b), { body, tag: 'musica-enfoque', icon: 'icons/icon-192.png', badge: 'icons/favicon-32.png', silent: true });
   } catch {
     /* algunos navegadores solo permiten notificaciones desde un service worker */
   }
