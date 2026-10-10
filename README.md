@@ -56,7 +56,7 @@ La racha se calcula con los minutos de enfoque de cada día, que se guardan apar
 
 Material 3 Expressive: botones que cambian de forma al presionarlos, grupos de botones conectados, sliders y switches de M3, listas segmentadas y un indicador de progreso ondulado en el dial y en la meta diaria. Fuentes: Google Sans Flex y Material Symbols Rounded.
 
-El tema se elige en **Ajustes → Tema** o con el botón de la barra superior: Sistema, Claro u Oscuro. Los colores salen de dos semillas, latón para el enfoque y salvia para la recuperación. Para regenerarlos:
+El tema se elige en **Ajustes → Tema** o con el botón de la barra superior: Sistema, Claro u Oscuro. Los colores salen de dos semillas: rojo, el color principal, para el enfoque y salvia para la recuperación. Para regenerarlos:
 
 ```bash
 npm install

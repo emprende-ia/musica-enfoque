@@ -8,7 +8,7 @@ const { MIN, HOUR } = S;
 const COMPLETE_MS = 45 * MIN; // una sesión cuenta como completa con 45 min o más de enfoque
 const MODES = ['focus', 'recovery'];
 const ALARM_FOR = { focus: 'focus', break: 'break', long: 'long' };
-const THEME_COLORS = { light: '#fff8f3', dark: '#17130d' };
+const THEME_COLORS = { light: '#fff8f7', dark: '#191211' };
 
 /* ---------- utilidades ---------- */
 const $ = (sel, root = document) => root.querySelector(sel);

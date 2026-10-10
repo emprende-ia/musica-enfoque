@@ -2,20 +2,20 @@
 // Uso: npm install && npm run tokens
 //
 // Semillas:
-//   primary  (enfoque)      → latón  #E6AD42
+//   primary  (enfoque, color principal) → rojo   #E53935
 //   tertiary (recuperación) → salvia #7DC6B1
 import { writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { Hct, TonalPalette, argbFromHex, hexFromArgb } from '@material/material-color-utilities';
 
-const FOCUS_SEED = '#E6AD42';
+const FOCUS_SEED = '#E53935';
 const RECOVERY_SEED = '#7DC6B1';
 
 const focus = Hct.fromInt(argbFromHex(FOCUS_SEED));
 const recovery = Hct.fromInt(argbFromHex(RECOVERY_SEED));
 
 const P = {
-  primary: TonalPalette.fromHueAndChroma(focus.hue, 48),
+  primary: TonalPalette.fromHueAndChroma(focus.hue, Math.min(Math.max(focus.chroma, 48), 72)),
   secondary: TonalPalette.fromHueAndChroma(focus.hue, 16),
   tertiary: TonalPalette.fromHueAndChroma(recovery.hue, 36),
   error: TonalPalette.fromHueAndChroma(25, 84),
