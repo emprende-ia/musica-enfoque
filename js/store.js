@@ -1,5 +1,6 @@
 /** Persistencia en localStorage: ajustes, presencia, historial y minutos por día. */
 import { keyOf } from './streak.js';
+import { DEFAULT_PLAN, isValidPlan } from './schedule.js';
 
 const KEYS = {
   settings: 'mye.settings.v1',
@@ -17,6 +18,8 @@ export const DEFAULTS = Object.freeze({
   notify: false,
   wake: false,
   theme: 'system', // 'system' | 'light' | 'dark'
+  // Horario: plan de todos los días y planes especiales por fecha (24 letras S/L/F)
+  schedule: { base: DEFAULT_PLAN, days: {} },
 });
 
 function read(key, fallback) {
@@ -44,7 +47,19 @@ export function loadSettings() {
     ...s,
     focus: { ...DEFAULTS.focus, ...(s.focus || {}) },
     recovery: { ...DEFAULTS.recovery, ...(s.recovery || {}) },
+    schedule: cleanSchedule(s.schedule),
   };
+}
+
+/** Horario válido; descarta planes especiales de hace más de 2 días. */
+export function cleanSchedule(sch) {
+  const base = isValidPlan(sch?.base) ? sch.base : DEFAULT_PLAN;
+  const d = new Date();
+  d.setDate(d.getDate() - 2);
+  const oldest = keyOf(d);
+  const days = {};
+  for (const [k, p] of Object.entries(sch?.days || {})) if (k >= oldest && isValidPlan(p)) days[k] = p;
+  return { base, days };
 }
 
 /** Guarda los ajustes. `touch` marca la hora del cambio (para decidir qué dispositivo gana al sincronizar). */

@@ -1,7 +1,10 @@
 // Pruebas del horario. Ejecuta: npm test  (o: node --test tests/*.test.js)
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { blockAt, blocksBetween, startOptions, dayHours, LONG_HOURS, MIN, HOUR, RULES } from '../js/schedule.js';
+import {
+  blockAt, blocksBetween, startOptions, dayHours, nextFocusStart, setPlanSource, normalizePlan, summarize,
+  DEFAULT_PLAN, MIN, HOUR, RULES,
+} from '../js/schedule.js';
 
 const at = (d, h, m = 0, s = 0) => new Date(2026, 9, d, h, m, s).getTime(); // octubre 2026, hora local
 const D = 12;
@@ -37,7 +40,8 @@ test('recuperaciones largas del día: 3:50, 8:50, 13:50, 18:50 y 23:50', () => {
   const longs = blocksBetween(at(D, 0), at(D + 1, 0)).filter((b) => b.type === 'long');
   const starts = longs.map((b) => new Date(b.start)).map((d) => `${d.getHours()}:${String(d.getMinutes()).padStart(2, '0')}`);
   assert.deepEqual(starts, ['23:50', '3:50', '8:50', '13:50', '18:50', '23:50']); // la primera viene del día anterior
-  assert.deepEqual([...LONG_HOURS].sort((a, b) => a - b), [0, 4, 9, 14, 19]);
+  assert.equal(DEFAULT_PLAN.length, 24);
+  assert.deepEqual([...DEFAULT_PLAN].flatMap((c, h) => (c === 'L' ? [h] : [])), [0, 4, 9, 14, 19]);
 });
 
 test('la recuperación de medianoche cruza de día', () => {
@@ -95,4 +99,98 @@ test('dayHours describe las 24 horas', () => {
   assert.equal(hours[0].role, 'long');
   assert.equal(hours[23].endsInLong, true);
   assert.equal(hours[23].end - hours[23].start, HOUR);
+});
+
+/* ---------- horario editable ---------- */
+
+// Día en que te despiertas a las 3:00: libre 0–2, ciclos de 4 y comida a las 14:00
+const WAKE3 = 'FFF' + 'SSSS' + 'L' + 'SSSS' + 'L' + 'S' + 'L' + 'SSSS' + 'L' + 'SSSS';
+const key = (d) => `2026-10-${String(d).padStart(2, '0')}`;
+
+function withPlans(map, fn) {
+  setPlanSource((k) => map[k] ?? DEFAULT_PLAN);
+  try {
+    fn();
+  } finally {
+    setPlanSource(() => DEFAULT_PLAN);
+  }
+}
+
+test('plan de un día que empieza a las 3:00', () => {
+  assert.equal(WAKE3.length, 24);
+  withPlans({ [key(D)]: WAKE3 }, () => {
+    expectBlock(at(D, 1), 'free', at(D, 0), at(D, 3));
+    expectBlock(at(D, 3, 0), 'focus', at(D, 3), at(D, 3, 50), { sessionInCycle: 1, cycleSize: 4, cycleName: 'Madrugada' });
+    expectBlock(at(D, 3, 50), 'break', at(D, 3, 50), at(D, 4)); // ya no hay recuperación larga a las 3:50
+    expectBlock(at(D, 6, 50), 'long', at(D, 6, 50), at(D, 8));
+    expectBlock(at(D, 13, 55), 'long', at(D, 13, 50), at(D, 15), { lunch: true });
+    // El día anterior usa el plan normal; su última sesión termina en recuperación corta
+    expectBlock(at(D - 1, 23, 55), 'break', at(D - 1, 23, 50), at(D, 0));
+    // El día siguiente vuelve al plan normal
+    expectBlock(at(D + 1, 0, 30), 'long', at(D, 23, 50), at(D + 1, 1));
+  });
+});
+
+test('en hora libre, el siguiente enfoque es la primera sesión', () => {
+  withPlans({ [key(D)]: WAKE3 }, () => {
+    const o = startOptions(at(D, 1, 15));
+    assert.equal(o.kind, 'free');
+    assert.equal(o.nextFocus, at(D, 3));
+    assert.equal(nextFocusStart(at(D, 0, 1)), at(D, 3));
+  });
+});
+
+test('una recuperación larga sin sesión antes se vuelve libre', () => {
+  assert.equal(normalizePlan('SSSFL' + 'S'.repeat(19)), 'SSSFF' + 'S'.repeat(19));
+  assert.equal(normalizePlan('L' + 'S'.repeat(23), 'F')[0], 'F', 'la de las 0:00 depende del día anterior');
+  assert.equal(normalizePlan('L' + 'S'.repeat(23), 'S')[0], 'L');
+});
+
+test('una sesión seguida de horas libres termina con recuperación corta', () => {
+  const plan = 'F'.repeat(8) + 'SSSS' + 'F'.repeat(12);
+  withPlans({ [key(D)]: plan }, () => {
+    expectBlock(at(D, 11, 55), 'break', at(D, 11, 50), at(D, 12), { sessionInCycle: 4, cycleSize: 4 });
+    // La L de las 0:00 del día siguiente no tiene sesión antes: también es libre
+    expectBlock(at(D, 12, 0), 'free', at(D, 12), at(D + 1, 1));
+  });
+});
+
+test('un día completamente libre no se traba', () => {
+  withPlans({ [key(D)]: 'F'.repeat(24) }, () => {
+    const b = blockAt(at(D, 10));
+    assert.equal(b.type, 'free');
+    assert.ok(b.start <= at(D, 0) && b.end >= at(D + 1, 0));
+    assert.equal(startOptions(at(D, 10)).nextFocus, at(D + 1, 1), 'la siguiente sesión es al día siguiente');
+  });
+});
+
+test('en todo plan los enfoques empiezan a :00 y las recuperaciones a :50, sin huecos', () => {
+  withPlans({ [key(D)]: WAKE3, [key(D + 1)]: 'SSFFLSSSSSSLFFSSSSLSSSSF' }, () => {
+    const blocks = blocksBetween(at(D - 1, 12), at(D + 2, 12));
+    for (const b of blocks) {
+      if (b.type === 'focus') assert.equal(new Date(b.start).getMinutes(), 0);
+      if (b.type === 'break' || b.type === 'long') assert.equal(new Date(b.start).getMinutes(), 50);
+      if (b.type === 'long') assert.equal((b.end - b.start) / MIN, 70);
+    }
+    for (let i = 1; i < blocks.length; i++) assert.equal(blocks[i].start, blocks[i - 1].end);
+  });
+});
+
+test('dayHours sigue al plan del día', () => {
+  withPlans({ [key(D)]: WAKE3 }, () => {
+    const h = dayHours(at(D, 9));
+    assert.equal(h[0].role, 'free');
+    assert.equal(h[3].role, 'session');
+    assert.equal(h[6].endsInLong, true);
+    assert.equal(h[13].nextLunch, true);
+    assert.equal(h[14].lunch, true);
+  });
+});
+
+test('resumen del plan avisa de ciclos de más de 4 sesiones', () => {
+  const s = summarize(WAKE3);
+  assert.deepEqual([s.sessions, s.longs, s.free], [17, 4, 3]);
+  assert.deepEqual(s.longRuns, []);
+  const s2 = summarize('FFF' + 'S'.repeat(6) + 'L' + 'S'.repeat(14));
+  assert.deepEqual(s2.longRuns.map((r) => [r.from, r.size]), [[3, 6], [10, 14]]);
 });

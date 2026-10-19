@@ -15,7 +15,12 @@ const LIVE_DAYS = 14; // días que se escuchan en vivo; el resto se lee una vez 
 export const syncConfigured = !!(firebaseConfig && firebaseConfig.apiKey && firebaseConfig.projectId);
 
 /** Ajustes que se sincronizan (los permisos del navegador se quedan en cada dispositivo). */
-export const SYNCED_SETTINGS = ['focus', 'recovery', 'alarm', 'theme'];
+export const SYNCED_SETTINGS = ['focus', 'recovery', 'alarm', 'theme', 'schedule'];
+
+// Firestore combina mapas al guardar con merge; los días especiales van como lista
+// para que quitar uno también se refleje en los demás dispositivos.
+const scheduleOut = (s) => ({ base: s.base, days: Object.entries(s.days || {}).map(([d, p]) => ({ d, p })) });
+export const scheduleIn = (s) => (s ? { base: s.base, days: Object.fromEntries((Array.isArray(s.days) ? s.days : []).map((x) => [x.d, x.p])) } : null);
 
 export class Sync {
   constructor(hooks = {}) {
@@ -147,6 +152,7 @@ export class Sync {
     const { F } = this.fb;
     const data = {};
     for (const k of SYNCED_SETTINGS) if (settings[k] !== undefined) data[k] = settings[k];
+    if (data.schedule) data.schedule = scheduleOut(data.schedule);
     try {
       await F.setDoc(this.#ref(), { settings: data, settingsUpdatedAt: updatedAt, updatedAt: F.serverTimestamp() }, { merge: true });
       this.#status('synced');

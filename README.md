@@ -2,15 +2,25 @@
 
 App web para trabajar en sesiones fijas al reloj, con tu música de YouTube Music y tonos binaurales para cada momento. Funciona como sitio estático en GitHub Pages: no necesita servidor ni cuenta.
 
-## Horario fijo de 24 horas
+## Horario de 24 horas
 
-Es el mismo todos los días y no se puede cambiar desde la app.
+**Lo que nunca cambia:**
 
 - **Enfoque:** 50 min. Siempre empieza a la hora en punto (:00).
 - **Recuperación:** 10 min. Siempre empieza a los :50.
-- **Sesión:** 1 hora.
-- **Cada 4 sesiones, recuperación larga de 70 min:** empieza a los :50 de la última sesión y termina en punto.
-- **La comida es a las 14:00:** la recuperación larga de 13:50 a 15:00 la cubre. Las demás quedan cada 5 horas a partir de ahí.
+- **Recuperación larga:** 70 min. Empieza a los :50 de una sesión y termina en punto.
+
+**Lo que tú decides:** qué hace cada hora del día. En **Las 24 horas → Editar horario**, cada hora puede ser:
+
+- **Enfoque:** una sesión (enfoque de :00 a :50 y recuperación de :50 a :00).
+- **Larga:** la recuperación larga, que empieza a los :50 de la hora anterior. Necesita una sesión justo antes; con las flechas la mueves una hora antes o después.
+- **Libre:** sin enfoque, sin música y sin alarmas (dormir, salir, etc.). Si estás presente, la app espera en silencio al siguiente enfoque.
+
+El cambio se puede aplicar a **hoy**, a **mañana** o a **todos los días**. Los días con horario especial muestran un aviso con el botón para volver al de todos los días. El horario se sincroniza entre tus dispositivos.
+
+El editor muestra cuántas sesiones, recuperaciones largas y horas libres tiene el día. También avisa si hay más de 4 sesiones seguidas o si con esas sesiones no alcanzas las 4 horas de la racha.
+
+Horario de todos los días al empezar (se puede cambiar):
 
 | Hora | Bloque |
 |---|---|
@@ -24,9 +34,8 @@ Es el mismo todos los días y no se puede cambiar desde la app.
 | 15:00, 16:00, 17:00, 18:00 | Tarde: 4 sesiones |
 | 18:50 – 20:00 | Recuperación larga |
 | 20:00, 21:00, 22:00, 23:00 | Noche: 4 sesiones |
-| 23:50 – 1:00 | Recuperación larga |
 
-Las 24 horas no se dividen exacto en ciclos de 5 horas, así que la madrugada es el único bloque de 3 sesiones. En total son 19 sesiones al día.
+Ejemplo de un día que empieza a las 3:00: libre de 0:00 a 3:00, sesiones de 3:00 a 6:50 y recuperación larga de 6:50 a 8:00. La recuperación larga que cae entre las 13:00 y las 15:00 se marca como comida.
 
 **Estar presente:** la app sigue el reloj todo el tiempo. "Comenzar a estar presente" activa la música, los binaurales, las alarmas y el registro en el bloque que toca. Si el enfoque ya empezó, puedes entrar con el tiempo que queda o esperar al siguiente enfoque. "Dejar de estar presente" lo apaga todo y guarda el tiempo ya contado.
 
@@ -167,7 +176,7 @@ npm test
 index.html            Página
 css/tokens.css        Colores de Material 3, claro y oscuro (generado)
 css/styles.css        Componentes y diseño
-js/schedule.js        Reglas del horario (lógica pura, con pruebas)
+js/schedule.js        Horario: reglas fijas y plan editable de cada día (con pruebas)
 js/streak.js          Rachas y protectores (lógica pura, con pruebas)
 js/audio.js           Binaurales, ruido marrón y alarmas (Web Audio)
 js/youtube.js         Reproductor de playlists (YouTube IFrame API)

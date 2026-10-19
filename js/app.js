@@ -3,7 +3,7 @@ import { AudioEngine, PRESETS, findPreset } from './audio.js';
 import { PlaylistPlayer, parsePlaylistId, playlistHint } from './youtube.js';
 import { computeStreak, keyOf, dateOf, GOAL_MIN, MAX_SHIELDS } from './streak.js';
 import * as store from './store.js';
-import { Sync, syncConfigured } from './sync.js';
+import { Sync, syncConfigured, scheduleIn } from './sync.js';
 import { mergeSessions, toRemoteMap, fromRemote } from './merge.js';
 import { initInstall, registerServiceWorker } from './install.js';
 import { toPresence, reconcile, soundHere } from './presence.js';
@@ -56,6 +56,7 @@ let previewTimer = null;
 let snackTimer = null;
 let wakeLock = null;
 let dayRenderKey = '';
+let quietSwitch = false; // el bloque cambió por editar el horario: sin alarma
 let dialHourKey = '';
 let todayWasDone = null;
 
@@ -404,8 +405,8 @@ function routeAudio(b, musicDelayMs = 0) {
 function onEnter(b, live) {
   current = b;
   if (live && b.type !== 'waiting') {
-    if (alarmArmedFor !== b.start && isSoundHere()) audio.playAlarm(ALARM_FOR[b.type]);
-    notify(b);
+    if (ALARM_FOR[b.type] && alarmArmedFor !== b.start && isSoundHere()) audio.playAlarm(ALARM_FOR[b.type]);
+    if (b.type !== 'free') notify(b);
   }
   alarmArmedFor = null;
   if (!audioPending) routeAudio(b, live ? 2500 : 0);
@@ -417,6 +418,7 @@ function armAlarm(b, now) {
   if (audioPending || !audio.running || !isSoundHere()) return;
   if (b.end - now > 15_000 || alarmArmedFor === b.end) return;
   const nb = S.blockAt(b.end);
+  if (!ALARM_FOR[nb.type]) return;
   if (audio.scheduleAlarm(ALARM_FOR[nb.type], b.end)) alarmArmedFor = b.end;
 }
 
@@ -548,10 +550,11 @@ function tick() {
   const b = currentBlock(now);
   const key = `${b.type}:${b.start}`;
   if (key !== lastKey) {
-    const live = lastKey !== null;
+    const live = lastKey !== null && !quietSwitch;
     lastKey = key;
     onEnter(b, live);
   }
+  quietSwitch = false;
   track(b, now, dt);
   armAlarm(b, now);
   renderRun(b, now);
@@ -621,7 +624,7 @@ function drawDialHour(hourStart, blocks) {
     const d0 = Math.max(0, ((b.start - hourStart) / HOUR) * 360);
     const d1 = Math.min(360, ((b.end - hourStart) / HOUR) * 360);
     const full = d1 - d0 >= 359;
-    return { d0: full ? 0 : d0 + SEG_INSET, d1: full ? 360 : d1 - SEG_INSET, full, cls: S.modeOf(b.type) || 'focus' };
+    return { d0: full ? 0 : d0 + SEG_INSET, d1: full ? 360 : d1 - SEG_INSET, full, cls: b.type === 'free' ? 'free' : S.modeOf(b.type) || 'focus' };
   });
   dial.tracks.innerHTML = dial.parts.map((p) => `<path class="track ${p.cls}" d=""/>`).join('');
   dial.actives.innerHTML = dial.parts.map((p) => `<path class="active ${p.cls}" d=""/>`).join('');
@@ -647,7 +650,7 @@ function updateDial(now) {
 
 function renderDialFor(now, muted) {
   const top = S.startOfHour(now);
-  const key = `${top}`;
+  const key = `${top}:${S.planVersion()}`;
   if (dialHourKey !== key) {
     dialHourKey = key;
     drawDialHour(top, S.blocksBetween(top, top + HOUR));
@@ -685,6 +688,17 @@ function renderClock(now) {
   setText($('#today'), `${WEEKDAYS[d.getDay()]} ${d.getDate()} ${MONTHS[d.getMonth()]}`);
 }
 
+/** Texto bajo el contador. */
+function subFor(b) {
+  if (b.type === 'waiting') return `Tu enfoque empieza a las ${hm(b.end)}`;
+  if (b.type === 'focus') return `Hasta las ${hm(b.end)}`;
+  if (b.type === 'free') {
+    const next = S.nextFocusStart(b.end);
+    return next ? `Tu siguiente enfoque es a las ${hm(next)}` : 'Sin sesiones en las próximas horas';
+  }
+  return `El enfoque vuelve a las ${hm(b.end)}`;
+}
+
 function renderIdle(now) {
   document.body.dataset.mode = 'idle';
   $('#sound-elsewhere').hidden = true;
@@ -693,7 +707,7 @@ function renderIdle(now) {
 
   setText($('#mode-label'), blockLabel(b));
   setText($('#countdown'), mmss(b.end - now));
-  setText($('#mode-sub'), b.type === 'focus' ? `Hasta las ${hm(b.end)}` : `El enfoque vuelve a las ${hm(b.end)}`);
+  setText($('#mode-sub'), subFor(b));
   document.title = 'Música & Enfoque';
   setText($('#next-line'), nextLine(b));
   renderPips(b);
@@ -701,18 +715,24 @@ function renderIdle(now) {
   $('#run-controls').hidden = true;
 
   const next = $('#btn-next');
+  next.hidden = true;
   if (opt.kind === 'now') {
-    next.hidden = true;
     setText($('#idle-hint'), 'Es hora en punto: el enfoque empieza en cuanto presiones.');
   } else if (opt.kind === 'choose') {
-    next.hidden = false;
-    setText($('.label', next), `Esperar al enfoque de las ${hm(opt.nextFocus)}`);
-    next.dataset.wait = opt.nextFocus;
+    if (opt.nextFocus) {
+      next.hidden = false;
+      setText($('.label', next), `Esperar al enfoque de las ${hm(opt.nextFocus)}`);
+      next.dataset.wait = opt.nextFocus;
+    }
     setText($('#idle-hint'), `El enfoque de las ${hm(b.start)} ya empezó. Si comienzas ahora, te quedan ${Math.ceil(opt.focusLeftMs / MIN)} min de enfoque.`);
+  } else if (opt.kind === 'free') {
+    setText($('#idle-hint'), opt.nextFocus
+      ? `Es tiempo libre. Si comienzas ahora, la app espera en silencio y el enfoque empieza a las ${hm(opt.nextFocus)}.`
+      : 'Es tiempo libre y no hay sesiones en las próximas horas. Edita el horario para agregar alguna.');
   } else {
-    next.hidden = true;
     const what = b.type === 'long' ? (b.lunch ? 'la recuperación larga de la comida' : 'una recuperación larga') : 'una recuperación de 10 min';
-    setText($('#idle-hint'), `Estás en ${what}. Si comienzas ahora, suena la música de recuperación y el enfoque vuelve a las ${hm(opt.nextFocus)}.`);
+    const then = opt.nextFocus ? ` y el enfoque vuelve a las ${hm(opt.nextFocus)}` : '';
+    setText($('#idle-hint'), `Estás en ${what}. Si comienzas ahora, suena la música de recuperación${then}.`);
   }
 
   renderDialFor(now, true);
@@ -730,24 +750,21 @@ function renderRun(b, now) {
   const left = mmss(b.end - now);
   setText($('#mode-label'), label);
   setText($('#countdown'), left);
-  let sub;
-  if (b.type === 'waiting') sub = `Tu enfoque empieza a las ${hm(b.end)}`;
-  else if (b.type === 'focus') sub = `Hasta las ${hm(b.end)}`;
-  else sub = `El enfoque vuelve a las ${hm(b.end)}`;
-  setText($('#mode-sub'), sub);
+  setText($('#mode-sub'), subFor(b));
   document.title = `${left} ${label} · Música & Enfoque`;
   setText($('#next-line'), nextLine(b));
   renderPips(b);
 
   if (!document.hidden) {
-    renderDialFor(now, b.type === 'waiting');
+    renderDialFor(now, b.type === 'waiting' || b.type === 'free');
     renderDay(now);
     renderStats();
   }
 }
 
 function renderPips(b) {
-  $('#cycle').hidden = false;
+  $('#cycle').hidden = !b.cycleSize;
+  if (!b.cycleSize) return;
   setText($('#cycle-label'), b.cycleName);
   const items = [];
   for (let i = 1; i <= b.cycleSize; i++) {
@@ -769,9 +786,7 @@ function renderPips(b) {
   }
 }
 
-/** Las 24 horas de hoy, agrupadas por bloque, con la hora actual marcada. */
-const GROUP_OF = (h) => (h === 0 ? 'Medianoche' : S.PLAN[h].cycleName);
-
+/** Las 24 horas de hoy, agrupadas por ciclo y tiempo libre, con la hora actual marcada. */
 function hourRow(h) {
   let what;
   let note;
@@ -780,11 +795,14 @@ function hourRow(h) {
     what = h.lunch ? `${icon('restaurant')}Recuperación larga: comida` : 'Recuperación larga';
     note = `${hm(h.start - 10 * MIN)}–${hm(h.end)}`;
     bar = '<i class="seg recovery" style="flex:60"><b></b></i>';
+  } else if (h.role === 'free') {
+    what = `${icon('bedtime')}Libre`;
+    note = 'Sin enfoque ni alarmas';
+    bar = '<i class="seg free" style="flex:60"><b></b></i>';
   } else {
     what = `Enfoque, sesión ${h.sessionInCycle} de ${h.cycleSize}`;
     const at50 = hm(h.start + 50 * MIN);
-    const lunchNext = S.PLAN[(h.hour + 1) % 24].lunch;
-    note = h.endsInLong ? `${at50} recuperación larga${lunchNext ? ' (comida)' : ''}` : `${at50} recuperación`;
+    note = h.endsInLong ? `${at50} recuperación larga${h.nextLunch ? ' (comida)' : ''}` : `${at50} recuperación`;
     bar = '<i class="seg focus" style="flex:50"><b></b></i><i class="seg recovery" style="flex:10"><b></b></i>';
   }
   return `
@@ -795,24 +813,39 @@ function hourRow(h) {
     </li>`;
 }
 
+function groupHours(hours) {
+  const groups = [];
+  for (const h of hours) {
+    const last = groups.at(-1);
+    let open;
+    if (!last) open = true;
+    else if (h.role === 'free') open = last.kind !== 'free';
+    else if (h.role === 'session') open = last.kind !== 'run' || h.sessionInCycle === 1;
+    else open = last.kind !== 'run';
+    if (open) {
+      const name = h.role === 'free' ? 'Libre' : h.role === 'long' && h.hour === 0 ? 'Medianoche' : h.cycleName;
+      groups.push({ kind: h.role === 'free' ? 'free' : 'run', name, hours: [] });
+    }
+    groups.at(-1).hours.push(h);
+  }
+  return groups;
+}
+
 function renderDay(now) {
   const list = $('#day');
-  const key = dayKey(now);
+  const key = `${dayKey(now)}:${S.planVersion()}`;
   if (key !== dayRenderKey) {
     dayRenderKey = key;
-    const groups = [];
-    for (const h of S.dayHours(now)) {
-      const name = GROUP_OF(h.hour);
-      if (!groups.length || groups.at(-1).name !== name) groups.push({ name, hours: [] });
-      groups.at(-1).hours.push(h);
-    }
-    list.innerHTML = groups
+    list.innerHTML = groupHours(S.dayHours(now))
       .map((g) => {
         const sessions = g.hours.filter((h) => h.role === 'session').length;
-        const count = sessions ? `<span>${sessions} ${sessions === 1 ? 'sesión' : 'sesiones'}</span>` : '';
-        return `<li class="day-group"><h3>${g.name}${count}</h3><ol class="seg-list">${g.hours.map(hourRow).join('')}</ol></li>`;
+        let count = '';
+        if (g.kind === 'free') count = `<span>${g.hours.length} h</span>`;
+        else if (sessions) count = `<span>${sessions} ${sessions === 1 ? 'sesión' : 'sesiones'}</span>`;
+        return `<li class="day-group ${g.kind}"><h3>${g.name}${count}</h3><ol class="seg-list">${g.hours.map(hourRow).join('')}</ol></li>`;
       })
       .join('');
+    renderPlanNote();
   }
   for (const li of list.querySelectorAll('.hr')) {
     const s = Number(li.dataset.start);
@@ -823,13 +856,204 @@ function renderDay(now) {
     li.classList.toggle('is-now', isNow);
     const fills = li.querySelectorAll('.seg b');
     const m = past ? 60 : isNow ? (now - s) / MIN : 0;
-    if (li.dataset.role === 'long') {
+    if (li.dataset.role !== 'session') {
       fills[0].style.width = `${((m / 60) * 100).toFixed(2)}%`;
     } else {
       fills[0].style.width = `${((Math.min(m, 50) / 50) * 100).toFixed(2)}%`;
       fills[1].style.width = `${((Math.max(0, m - 50) / 10) * 100).toFixed(2)}%`;
     }
   }
+}
+
+/* ---------- editar el horario ---------- */
+const SCOPE_LABEL = { today: 'hoy', tomorrow: 'mañana', base: 'todos los días' };
+const editor = { open: false, scope: 'today', drafts: {} };
+
+function scopeKey(scope) {
+  const today = S.dateKey(Date.now());
+  return scope === 'today' ? today : scope === 'tomorrow' ? S.shiftDay(today, 1) : null;
+}
+
+/** Plan guardado de un alcance (hoy, mañana o todos los días). */
+function savedPlan(scope) {
+  const k = scopeKey(scope);
+  return (k && settings.schedule.days[k]) || settings.schedule.base;
+}
+
+/** Última hora del día anterior, para saber si la hora 0:00 puede ser recuperación larga. */
+function prevLastFor(scope, draft) {
+  if (scope === 'base') return draft[23];
+  const k = scopeKey(scope);
+  const prev = S.shiftDay(k, -1);
+  if (scope === 'tomorrow' && editor.drafts.today) return editor.drafts.today[23];
+  return (settings.schedule.days[prev] || settings.schedule.base)[23];
+}
+
+/** Aplica el horario guardado a los cálculos y vuelve a dibujar todo. */
+function applySchedule() {
+  const sch = settings.schedule;
+  S.setPlanSource((k) => sch.days[k] || sch.base);
+  quietSwitch = true;
+  dayRenderKey = '';
+  dialHourKey = '';
+  tick();
+}
+
+function renderPlanNote() {
+  const note = $('#plan-note');
+  const today = S.dateKey(Date.now());
+  const special = settings.schedule.days[today];
+  const show = !editor.open && !!special && special !== settings.schedule.base;
+  note.hidden = !show;
+  if (show) setText($('#plan-note-text'), 'Hoy usas un horario especial.');
+}
+
+function openEditor() {
+  editor.open = true;
+  editor.drafts = {};
+  setScope('today');
+  $('#plan-editor').hidden = false;
+  $('#day').hidden = true;
+  $('#btn-edit-plan').hidden = true;
+  renderPlanNote();
+  $('#plan-editor').scrollIntoView({ behavior: reduceMotion.matches ? 'auto' : 'smooth', block: 'start' });
+}
+
+function closeEditor() {
+  editor.open = false;
+  $('#plan-editor').hidden = true;
+  $('#day').hidden = false;
+  $('#btn-edit-plan').hidden = false;
+  renderPlanNote();
+}
+
+function setScope(scope) {
+  editor.scope = scope;
+  if (!editor.drafts[scope]) editor.drafts[scope] = savedPlan(scope);
+  document.querySelectorAll('[data-scope]').forEach((b) => b.setAttribute('aria-checked', String(b.dataset.scope === scope)));
+  const k = scopeKey(scope);
+  let note;
+  if (scope === 'base') {
+    note = 'Este es tu horario normal. Los días con horario especial lo siguen usando.';
+  } else {
+    const d = S.dateKey(Date.now()) === k ? 'Hoy' : 'Mañana';
+    note = settings.schedule.days[k]
+      ? `${d} tiene un horario especial. Los demás días no cambian.`
+      : `${d} usa tu horario de todos los días. Lo que cambies aquí aplica solo a ${d.toLowerCase()}.`;
+  }
+  setText($('#plan-scope-note'), note);
+  setText($('.label', $('#btn-plan-reset')), scope === 'base' ? 'Volver al horario original' : 'Usar el de todos los días');
+  renderEditor();
+}
+
+function setDraft(plan) {
+  const scope = editor.scope;
+  editor.drafts[scope] = S.normalizePlan(plan, prevLastFor(scope, plan));
+  renderEditor();
+}
+
+const ROLE_OPTIONS = [
+  ['S', 'Enfoque'],
+  ['L', 'Larga'],
+  ['F', 'Libre'],
+];
+
+function renderEditor() {
+  const scope = editor.scope;
+  const draft = editor.drafts[scope];
+  const prevLast = prevLastFor(scope, draft);
+  const rows = [];
+  for (let h = 0; h < 24; h++) {
+    const r = draft[h];
+    const prev = h === 0 ? prevLast : draft[h - 1];
+    const next = h === 23 ? null : draft[h + 1];
+    const t = `${h}:00`;
+    const btns = ROLE_OPTIONS.map(([v, label]) => {
+      const disabled = v === 'L' && prev !== 'S' && r !== 'L';
+      return `<button type="button" role="radio" data-h="${h}" data-v="${v}" aria-checked="${r === v}"${disabled ? ' disabled title="Necesita una sesión justo antes"' : ''}>${label}</button>`;
+    }).join('');
+    let note = '';
+    if (r === 'S') note = next === 'L' ? `${h}:50 recuperación larga` : `${h}:50 recuperación`;
+    else if (r === 'L') note = `${h === 0 ? 23 : h - 1}:50 a ${(h + 1) % 24}:00`;
+    let move = '';
+    if (r === 'L') {
+      const canUp = h >= 2 && draft[h - 1] === 'S' && draft[h - 2] === 'S';
+      const canDown = h <= 22 && draft[h + 1] === 'S';
+      move = `<span class="pr-move">
+        <button type="button" class="icon-btn" data-move="-1" data-h="${h}" aria-label="Mover la recuperación larga una hora antes"${canUp ? '' : ' disabled'}>${icon('arrow_upward')}</button>
+        <button type="button" class="icon-btn" data-move="1" data-h="${h}" aria-label="Mover la recuperación larga una hora después"${canDown ? '' : ' disabled'}>${icon('arrow_downward')}</button>
+      </span>`;
+    }
+    rows.push(`<li class="pr pr-${r}"><span class="pr-time">${t}</span><div class="pr-opts" role="radiogroup" aria-label="Qué hacer a las ${t}">${btns}</div><span class="pr-note">${note}</span>${move}</li>`);
+  }
+  $('#plan-rows').innerHTML = rows.join('');
+
+  const sum = S.summarize(draft, prevLast);
+  let html = `<p><b>${sum.sessions}</b> ${sum.sessions === 1 ? 'sesión' : 'sesiones'} · <b>${sum.longs}</b> ${sum.longs === 1 ? 'recuperación larga' : 'recuperaciones largas'} · <b>${sum.free}</b> h libres · <b>${fmtMin(sum.sessions * 50)}</b> de enfoque posible</p>`;
+  for (const run of sum.longRuns) {
+    html += `<p class="warn">De ${run.from}:00 a ${run.to - 1}:50 hay ${run.size} sesiones seguidas. Se recomienda una recuperación larga cada 4.</p>`;
+  }
+  if (sum.sessions * 50 < GOAL_MIN) html += `<p class="warn">Con estas sesiones no alcanzas las 4 horas de enfoque para la racha.</p>`;
+  $('#plan-summary').innerHTML = html;
+  const dirty = draft !== savedPlan(scope);
+  $('#btn-plan-save').disabled = !dirty;
+}
+
+function onEditorClick(e) {
+  const opt = e.target.closest('[data-v]');
+  if (opt && !opt.disabled) {
+    const h = Number(opt.dataset.h);
+    const d = editor.drafts[editor.scope];
+    setDraft(d.slice(0, h) + opt.dataset.v + d.slice(h + 1));
+    return;
+  }
+  const mv = e.target.closest('[data-move]');
+  if (mv && !mv.disabled) {
+    const h = Number(mv.dataset.h);
+    const to = h + Number(mv.dataset.move);
+    const d = [...editor.drafts[editor.scope]];
+    d[h] = 'S';
+    d[to] = 'L';
+    setDraft(d.join(''));
+  }
+}
+
+function savePlan() {
+  const scope = editor.scope;
+  const draft = editor.drafts[scope];
+  const sch = settings.schedule;
+  if (scope === 'base') {
+    sch.base = draft;
+  } else {
+    const k = scopeKey(scope);
+    if (draft === sch.base) delete sch.days[k];
+    else sch.days[k] = draft;
+  }
+  saveSettings();
+  applySchedule();
+  closeEditor();
+  showSnackbar(`${icon('edit_calendar')}Horario guardado para ${SCOPE_LABEL[scope]}.`);
+}
+
+function resetPlan() {
+  setDraft(editor.scope === 'base' ? S.DEFAULT_PLAN : settings.schedule.base);
+}
+
+function useBaseToday() {
+  delete settings.schedule.days[S.dateKey(Date.now())];
+  saveSettings();
+  applySchedule();
+  showSnackbar(`${icon('edit_calendar')}Hoy vuelves a tu horario de todos los días.`);
+}
+
+function wireEditor() {
+  $('#btn-edit-plan').addEventListener('click', openEditor);
+  $('#btn-plan-cancel').addEventListener('click', closeEditor);
+  $('#btn-plan-save').addEventListener('click', savePlan);
+  $('#btn-plan-reset').addEventListener('click', resetPlan);
+  $('#btn-plan-use-base').addEventListener('click', useBaseToday);
+  $('#plan-rows').addEventListener('click', onEditorClick);
+  document.querySelectorAll('[data-scope]').forEach((b) => b.addEventListener('click', () => setScope(b.dataset.scope)));
 }
 
 /* ---------- racha y registro ---------- */
@@ -1162,6 +1386,18 @@ function onRemoteSettings(remote, remoteAt) {
     settings.theme = remote.theme;
     applyTheme(settings.theme);
   }
+  const sch = scheduleIn(remote.schedule);
+  if (sch) {
+    const clean = store.cleanSchedule(sch);
+    if (JSON.stringify(clean) !== JSON.stringify(settings.schedule)) {
+      settings.schedule = clean;
+      applySchedule();
+      if (editor.open) {
+        editor.drafts = {};
+        setScope(editor.scope);
+      }
+    }
+  }
   settings._updatedAt = remoteAt;
   store.saveSettings(settings, { touch: false });
 }
@@ -1418,9 +1654,11 @@ function startTicker() {
 /* ---------- arranque ---------- */
 function init() {
   applyTheme(settings.theme);
+  S.setPlanSource((k) => settings.schedule.days[k] || settings.schedule.base);
   buildDial();
   buildCards();
   wireGlobal();
+  wireEditor();
   if (run) {
     // Formato anterior (ciclo contado desde que se iniciaba): se conserva como presencia activa
     if (run.startedAt == null) run = { startedAt: run.anchor ?? Date.now(), waitUntil: null, quiet: !!run.quiet, current: null };
