@@ -3,14 +3,16 @@
  *
  * Datos en la nube, por persona:
  *   users/{uid}               → { settings, settingsUpdatedAt, presence }
- *   users/{uid}/days/{día}    → { day, minutes, sessions: { [inicio]: { s, z, m, c } } }
+ *   users/{uid}/days/{día}    → { day, minutes, devices: { [dispositivo]: { [inicio]: { s, z, m, c } } } }
+ *
+ * Cada dispositivo escribe solo su copia en devices.{id}: así ninguno puede bajar los
+ * minutos que registró otro. Al leer se toma, por sesión, la copia con más minutos.
  *
  * Sin configuración (firebase-config.js en null) la app funciona solo con este navegador.
  */
 import { firebaseConfig } from './firebase-config.js';
 
 const SDK = 'https://www.gstatic.com/firebasejs/12.19.0';
-const LIVE_DAYS = 14; // días que se escuchan en vivo; el resto se lee una vez al iniciar sesión
 
 export const syncConfigured = !!(firebaseConfig && firebaseConfig.apiKey && firebaseConfig.projectId);
 
@@ -23,8 +25,9 @@ const scheduleOut = (s) => ({ base: s.base, days: Object.entries(s.days || {}).m
 export const scheduleIn = (s) => (s ? { base: s.base, days: Object.fromEntries((Array.isArray(s.days) ? s.days : []).map((x) => [x.d, x.p])) } : null);
 
 export class Sync {
-  constructor(hooks = {}) {
+  constructor(hooks = {}, { deviceId = 'este' } = {}) {
     this.hooks = hooks;
+    this.deviceId = deviceId;
     this.fb = null;
     this.user = null;
     this.unsubs = [];
@@ -113,38 +116,45 @@ export class Sync {
       this.#status('signed-out');
       return;
     }
+    this.#listen();
+  }
+
+  /**
+   * Escucha en vivo los ajustes, la presencia y todos los días del historial.
+   * Los oyentes se conectan aunque no haya red: Firestore se reconecta solo y vuelve
+   * a entregar lo que cambió mientras tanto.
+   */
+  #listen() {
     const { F, db } = this.fb;
+    const uid = this.user.uid;
     this.#status('syncing');
-    try {
-      const userRef = this.#ref();
-      const daysCol = F.collection(db, 'users', user.uid, 'days');
+    const fail = (e) => this.#status('error', explain(e));
+    this.unsubs.push(
+      F.onSnapshot(this.#ref(), (d) => {
+        const data = d.exists() ? d.data() : {};
+        this.hooks.onRemoteSettings?.(data.settings || null, data.settingsUpdatedAt || 0);
+        this.hooks.onRemotePresence?.(data.presence || null);
+      }, fail),
+    );
+    let first = true;
+    this.unsubs.push(
+      F.onSnapshot(F.collection(db, 'users', uid, 'days'), (q) => {
+        const changes = q.docChanges();
+        const docs = changes.filter((c) => c.type !== 'removed').map((c) => ({ day: c.doc.id, ...c.doc.data() }));
+        const removed = changes.filter((c) => c.type === 'removed').map((c) => c.doc.id);
+        if (first || docs.length) this.hooks.onRemoteDays?.(docs, { initial: first });
+        if (!first && removed.length) this.hooks.onRemoteDaysRemoved?.(removed);
+        first = false;
+        if (!q.metadata?.fromCache && !q.metadata?.hasPendingWrites) this.#status('synced');
+      }, fail),
+    );
+  }
 
-      // 1) Todo el historial, una vez
-      const snap = await F.getDocs(daysCol);
-      const remoteDays = snap.docs.map((d) => ({ day: d.id, ...d.data() }));
-      this.hooks.onRemoteDays?.(remoteDays, { initial: true });
-
-      // 2) Ajustes y días recientes, en vivo
-      this.unsubs.push(
-        F.onSnapshot(userRef, (d) => {
-          const data = d.exists() ? d.data() : {};
-          this.hooks.onRemoteSettings?.(data.settings || null, data.settingsUpdatedAt || 0);
-          this.hooks.onRemotePresence?.(data.presence || null);
-        }, (e) => this.#status('error', explain(e))),
-      );
-      const from = new Date();
-      from.setDate(from.getDate() - LIVE_DAYS);
-      const fromKey = `${from.getFullYear()}-${String(from.getMonth() + 1).padStart(2, '0')}-${String(from.getDate()).padStart(2, '0')}`;
-      this.unsubs.push(
-        F.onSnapshot(F.query(daysCol, F.where('day', '>=', fromKey)), (q) => {
-          const changed = q.docChanges().filter((c) => c.type !== 'removed').map((c) => ({ day: c.doc.id, ...c.doc.data() }));
-          if (changed.length) this.hooks.onRemoteDays?.(changed, { initial: false });
-          if (!q.metadata.hasPendingWrites) this.#status('synced');
-        }, (e) => this.#status('error', explain(e))),
-      );
-    } catch (e) {
-      this.#status('error', explain(e));
-    }
+  /** Vuelve a leer todo desde la nube (al volver a la app o con "Sincronizar ahora"). */
+  resync() {
+    if (!this.user || !this.fb) return;
+    this.#stop();
+    this.#listen();
   }
 
   async pushSettings(settings, updatedAt) {
@@ -173,14 +183,21 @@ export class Sync {
     }
   }
 
+  /** Sube la copia de este dispositivo para un día. Devuelve true cuando la nube la confirmó. */
   async pushDay(day, sessions, minutes) {
-    if (!this.user) return;
+    if (!this.user) return false;
     const { F } = this.fb;
     try {
-      await F.setDoc(this.#ref('days', day), { day, minutes, sessions, updatedAt: F.serverTimestamp() }, { merge: true });
+      await F.setDoc(
+        this.#ref('days', day),
+        { day, minutes, devices: { [this.deviceId]: sessions }, updatedAt: F.serverTimestamp() },
+        { merge: true },
+      );
       this.#status('synced');
+      return true;
     } catch (e) {
       this.#status('error', explain(e));
+      return false;
     }
   }
 

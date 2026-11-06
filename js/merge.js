@@ -4,6 +4,9 @@
  * bloque registrado en la computadora y en el celular cuenta una sola vez: gana el
  * registro con más minutos.
  *
+ * En la nube cada dispositivo escribe solo su propia copia (devices.{id}), así nadie
+ * puede bajar los minutos que registró otro. Al leer se toma el mayor de todas.
+ *
  * Formato en la nube (compacto): { s: sesión, z: tamaño del ciclo, m: minutos, c: completa }
  */
 export const toRemote = (e) => ({ s: e.session, z: e.size ?? null, m: e.minutes, c: !!e.complete });
@@ -41,4 +44,22 @@ export function mergeSessions(localList, remoteMap = {}) {
   for (const start of Object.keys(merged)) if (!remoteMap || !(start in remoteMap)) remoteNeedsPush = true;
   const minutes = Object.values(merged).reduce((sum, x) => sum + (x.m || 0), 0);
   return { merged, minutes, localChanged, remoteNeedsPush };
+}
+
+/**
+ * Junta todas las copias de un día en la nube: la antigua (sessions) y la de cada
+ * dispositivo (devices.{id}); por sesión gana la de más minutos.
+ */
+export function combineRemote(doc) {
+  const out = {};
+  const sources = [doc?.sessions, ...Object.values(doc?.devices || {})];
+  for (const src of sources) {
+    for (const [start, r] of Object.entries(src || {})) {
+      if (!r || typeof r.m !== 'number') continue;
+      const cur = out[start];
+      if (!cur || r.m > cur.m) out[start] = { ...r, c: !!(r.c || cur?.c) };
+      else if (r.c && !cur.c) cur.c = true;
+    }
+  }
+  return out;
 }

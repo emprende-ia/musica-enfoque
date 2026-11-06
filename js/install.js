@@ -97,10 +97,21 @@ export function initInstall({ icon, onInstalled }) {
   render();
 }
 
-/** Registra el service worker (necesario para instalar y para abrir sin conexión). */
-export function registerServiceWorker() {
+/**
+ * Registra el service worker (necesario para instalar y para abrir sin conexión).
+ * `onUpdate` se llama cuando una versión nueva de la app toma el control.
+ */
+export function registerServiceWorker(onUpdate) {
   const local = ['localhost', '127.0.0.1'].includes(location.hostname);
   if (!('serviceWorker' in navigator) || (location.protocol !== 'https:' && !local)) return;
+  const hadController = !!navigator.serviceWorker.controller;
+  navigator.serviceWorker.addEventListener('controllerchange', () => {
+    if (hadController) onUpdate?.();
+  });
+  // Una app instalada puede quedarse abierta días: al volver a ella, se busca versión nueva
+  document.addEventListener('visibilitychange', () => {
+    if (!document.hidden) navigator.serviceWorker.getRegistration().then((r) => r?.update()).catch(() => {});
+  });
   const register = () => navigator.serviceWorker.register('sw.js').catch(() => {});
   if (document.readyState === 'complete') register();
   else window.addEventListener('load', register);

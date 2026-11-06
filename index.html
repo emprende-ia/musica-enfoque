@@ -28,7 +28,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Google+Sans+Flex:opsz,wght,ROND@6..144,1..1000,0..100&display=swap">
-  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Rounded:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200&icon_names=account_circle,add_box,alarm,arrow_downward,arrow_drop_down,arrow_upward,bedtime,brightness_auto,check,close,cloud_done,cloud_off,dark_mode,delete,edit_calendar,event,graphic_eq,headphones,install_mobile,ios_share,light_mode,local_fire_department,login,logout,more_vert,pause,play_arrow,queue_music,restart_alt,restaurant,schedule,self_improvement,shield,skip_next,skip_previous,spa,stop_circle,timer,volume_up&display=block">
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Rounded:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200&icon_names=account_circle,add_box,alarm,arrow_downward,arrow_drop_down,arrow_upward,bedtime,brightness_auto,check,close,cloud_done,cloud_off,cloud_upload,dark_mode,delete,edit_calendar,event,graphic_eq,headphones,install_mobile,ios_share,light_mode,local_fire_department,login,logout,more_vert,pause,play_arrow,queue_music,restart_alt,restaurant,schedule,self_improvement,shield,skip_next,skip_previous,spa,stop_circle,sync,timer,volume_up&display=block">
   <link rel="stylesheet" href="css/tokens.css">
   <link rel="stylesheet" href="css/styles.css">
   <script type="module" src="js/app.js"></script>
@@ -188,6 +188,16 @@
             <div id="shield-slots" class="shield-slots"></div>
             <p id="shield-text" class="shield-text"></p>
           </div>
+        </div>
+        <div id="log-sync" class="log-sync" hidden>
+          <span class="ms" id="log-sync-icon" aria-hidden="true">cloud_done</span>
+          <p id="log-sync-text" role="status"></p>
+          <button type="button" id="btn-sync-now" class="btn text" hidden>
+            <span class="ms" aria-hidden="true">sync</span><span class="label">Sincronizar ahora</span>
+          </button>
+          <button type="button" id="btn-log-signin" class="btn tonal" hidden>
+            <span class="ms" aria-hidden="true">login</span><span class="label">Iniciar sesión</span>
+          </button>
         </div>
         <ol id="streak-days" class="streak-days" aria-label="Últimos 14 días"></ol>
         <p class="rules">El día cuenta con 4 horas de enfoque. Por cada 7 días completos ganas un protector, hasta 2. Si un día no llegas, un protector cuida tu racha.</p>

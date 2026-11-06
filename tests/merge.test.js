@@ -1,7 +1,7 @@
 // Pruebas de la unión de sesiones entre dispositivos. Ejecuta: npm test
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mergeSessions, toRemoteMap, fromRemote } from '../js/merge.js';
+import { mergeSessions, toRemoteMap, fromRemote, combineRemote } from '../js/merge.js';
 
 const e = (start, minutes, session = 1) => ({ start, session, size: 4, minutes, complete: minutes >= 45 });
 
@@ -41,4 +41,27 @@ test('si ya están iguales no se sube nada (sin bucles)', () => {
 test('ida y vuelta conserva los datos', () => {
   const back = fromRemote('1000', toRemoteMap([e(1000, 47, 3)])['1000']);
   assert.deepEqual(back, { start: 1000, session: 3, size: 4, minutes: 47, complete: true });
+});
+
+test('la nube junta las copias de cada dispositivo y gana la mayor', () => {
+  const doc = {
+    sessions: toRemoteMap([e(1000, 30)]), // formato antiguo
+    devices: {
+      pc: toRemoteMap([e(1000, 50), e(2000, 20, 2)]),
+      cel: toRemoteMap([e(1000, 12), e(2000, 40, 2), e(3000, 5, 3)]),
+    },
+  };
+  const all = combineRemote(doc);
+  assert.deepEqual(Object.fromEntries(Object.entries(all).map(([k, v]) => [k, v.m])), { 1000: 50, 2000: 40, 3000: 5 });
+  assert.equal(all['1000'].c, true);
+});
+
+test('un dispositivo con menos minutos no baja el total de los demás', () => {
+  const doc = { devices: { pc: toRemoteMap([e(1000, 50)]) } };
+  // El celular sube su copia con 12 min: solo cambia su propia llave
+  doc.devices.cel = toRemoteMap([e(1000, 12)]);
+  assert.equal(combineRemote(doc)['1000'].m, 50);
+  const r = mergeSessions([e(1000, 12)], combineRemote(doc));
+  assert.equal(r.minutes, 50);
+  assert.equal(r.localChanged, true);
 });

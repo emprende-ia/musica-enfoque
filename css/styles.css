@@ -1315,6 +1315,25 @@ input[type="range"]:focus-visible { outline-offset: 0; border-radius: var(--shap
 
 .shield-text { margin: 0; font-size: 0.875rem; line-height: 1.25rem; }
 
+.log-sync {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 12px;
+  max-width: 680px;
+  margin: 12px 0 0;
+  padding: 8px 8px 8px 16px;
+  border-radius: var(--shape-lg);
+  background: var(--md-sys-color-surface-container);
+  color: var(--md-sys-color-on-surface-variant);
+}
+
+.log-sync p { flex: 1 1 14rem; margin: 0; font-size: 0.875rem; line-height: 1.25rem; }
+.log-sync > .ms { font-size: 22px; color: var(--md-sys-color-tertiary); }
+.log-sync.warn { background: var(--md-sys-color-error-container); color: var(--md-sys-color-on-error-container); }
+.log-sync.warn > .ms { color: inherit; }
+.log-sync.pending > .ms { color: var(--md-sys-color-primary); }
+
 .streak-days {
   display: grid;
   grid-template-columns: repeat(14, minmax(0, 1fr));
@@ -1578,6 +1597,7 @@ input[type="range"]:focus-visible { outline-offset: 0; border-radius: var(--shap
 }
 
 .snackbar .ms { color: var(--md-sys-color-inverse-primary); }
+.snackbar .snack-action { margin: -8px -8px -8px auto; color: var(--md-sys-color-inverse-primary); }
 
 @keyframes snack-in {
   from { opacity: 0; transform: translate(-50%, 24px) scale(0.96); }

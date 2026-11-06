@@ -4,7 +4,7 @@ import { PlaylistPlayer, parsePlaylistId, playlistHint } from './youtube.js';
 import { computeStreak, keyOf, dateOf, GOAL_MIN, MAX_SHIELDS } from './streak.js';
 import * as store from './store.js';
 import { Sync, syncConfigured, scheduleIn } from './sync.js';
-import { mergeSessions, toRemoteMap, fromRemote } from './merge.js';
+import { mergeSessions, toRemoteMap, fromRemote, combineRemote } from './merge.js';
 import { initInstall, registerServiceWorker } from './install.js';
 import { toPresence, reconcile, soundHere } from './presence.js';
 
@@ -59,6 +59,8 @@ let dayRenderKey = '';
 let quietSwitch = false; // el bloque cambió por editar el horario: sin alarma
 let dialHourKey = '';
 let todayWasDone = null;
+let lastCheckpoint = 0;
+let hiddenAt = 0;
 
 audio.setAlarmVolume(settings.alarm / 100);
 
@@ -433,6 +435,10 @@ function track(b, now, dt) {
       store.saveRun(run);
       lastPersist = now;
     }
+    if (now - lastCheckpoint >= 60_000 && run.current.focusedMs >= MIN) {
+      lastCheckpoint = now;
+      checkpoint();
+    }
   } else if (run.current) {
     finalize();
   }
@@ -442,20 +448,39 @@ function finalize() {
   const c = run?.current;
   if (!c) return;
   run.current = null;
-  if (c.focusedMs >= MIN) {
-    const minutes = Math.round(c.focusedMs / MIN);
-    const entry = { start: c.start, session: c.session, size: c.size, minutes, complete: c.focusedMs >= COMPLETE_MS };
-    const existing = log.find((e) => e.start === c.start); // ya llegó de otro dispositivo
-    if (!existing) log.push(entry);
-    else if (minutes > existing.minutes) Object.assign(existing, entry);
-    store.saveLog(log);
-    const k = dayKey(c.start);
-    days[k] = dayEntries(k).reduce((sum, e) => sum + e.minutes, 0);
-    store.saveDays(days);
-    pushDay(k);
-  }
+  if (c.focusedMs >= MIN) saveEntry(c, Math.round(c.focusedMs / MIN));
   store.saveRun(run);
   renderStats(true);
+}
+
+/** Guarda la sesión en curso cada minuto, para que el otro dispositivo vea el avance en vivo. */
+function checkpoint() {
+  const c = run?.current;
+  if (c && saveEntry(c, Math.floor(c.focusedMs / MIN))) renderStats(true);
+}
+
+/** Guarda (o sube) los minutos de una sesión sin bajar nunca lo ya registrado. Devuelve si cambió algo. */
+function saveEntry(c, minutes) {
+  const entry = { start: c.start, session: c.session, size: c.size, minutes, complete: c.focusedMs >= COMPLETE_MS };
+  const existing = log.find((e) => e.start === c.start); // pudo llegar de otro dispositivo
+  let changed = false;
+  if (!existing) {
+    log.push(entry);
+    changed = true;
+  } else if (minutes > existing.minutes) {
+    Object.assign(existing, entry);
+    changed = true;
+  } else if (entry.complete && !existing.complete) {
+    existing.complete = true;
+    changed = true;
+  }
+  if (!changed) return false;
+  store.saveLog(log);
+  const k = dayKey(c.start);
+  days[k] = dayEntries(k).reduce((sum, e) => sum + e.minutes, 0);
+  store.saveDays(days);
+  pushDay(k);
+  return true;
 }
 
 /** Empieza a estar presente. `waitUntil`: esperar en silencio hasta ese enfoque. */
@@ -1084,12 +1109,20 @@ function renderGoalBar(fraction) {
   }
 }
 
-function showSnackbar(html) {
+function showSnackbar(html, action = null) {
   const bar = $('#snackbar');
   bar.innerHTML = html;
+  if (action) {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'btn text snack-action';
+    btn.textContent = action.label;
+    btn.addEventListener('click', action.fn);
+    bar.append(btn);
+  }
   bar.hidden = false;
   clearTimeout(snackTimer);
-  snackTimer = setTimeout(() => (bar.hidden = true), 6000);
+  if (!action) snackTimer = setTimeout(() => (bar.hidden = true), 6000);
 }
 
 const STATUS_ICON = {
@@ -1222,9 +1255,17 @@ function renderStats(force = false) {
     weekEl.setAttribute('aria-label', `Minutos de enfoque por día, meta de 240: ${week.map((d) => `${d.label} ${d.min}`).join(', ')}`);
   }
 
-  const items = todays.map((e) => `
-    <li><span class="log-time">${hm(e.start)}</span><span>${e.size ? `Sesión ${e.session} de ${e.size}` : `Sesión ${e.session}`}</span><span class="log-min">${e.minutes} min</span><span class="log-state ${e.complete ? 'ok' : ''}">${e.complete ? 'Completa' : 'Parcial'}</span></li>`);
-  if (inProgress >= 1) {
+  const nowBlock = S.blockAt(now);
+  const liveStart = nowBlock.type === 'focus' ? nowBlock.start : null;
+  const label = (e) => (e.size ? `Sesión ${e.session} de ${e.size}` : `Sesión ${e.session}`);
+  const items = todays.map((e) => {
+    if (e.start === liveStart) {
+      const mins = Math.max(e.minutes, cur && cur.start === e.start ? Math.floor(cur.focusedMs / MIN) : 0);
+      return `<li class="live"><span class="log-time">${hm(e.start)}</span><span>${label(e)}</span><span class="log-min">${mins} min</span><span class="log-state">En curso</span></li>`;
+    }
+    return `<li><span class="log-time">${hm(e.start)}</span><span>${label(e)}</span><span class="log-min">${e.minutes} min</span><span class="log-state ${e.complete ? 'ok' : ''}">${e.complete ? 'Completa' : 'Parcial'}</span></li>`;
+  });
+  if (inProgress >= 1 && !todays.some((e) => e.start === cur.start)) {
     items.push(`<li class="live"><span class="log-time">${hm(run.current.start)}</span><span>Sesión ${run.current.session} de ${run.current.size}</span><span class="log-min">${Math.floor(inProgress)} min</span><span class="log-state">En curso</span></li>`);
   }
   const logHTML = items.length ? items.join('') : '<li class="empty">Aún no hay sesiones hoy. Cada sesión aparece aquí al terminar su enfoque.</li>';
@@ -1351,9 +1392,53 @@ function saveSettings() {
 
 const dayEntries = (k) => log.filter((e) => dayKey(e.start) === k);
 
+/* Días con cambios de este dispositivo que la nube aún no confirmó (sobreviven a cerrar la app) */
+const pendingDays = new Map(); // día → número de cambio
+try {
+  for (const k of JSON.parse(localStorage.getItem('mye.pendingDays') || '[]')) pendingDays.set(k, 0);
+} catch {
+  /* nada */
+}
+let pendingSeq = 0;
+function savePending() {
+  try {
+    localStorage.setItem('mye.pendingDays', JSON.stringify([...pendingDays.keys()]));
+  } catch {
+    /* nada */
+  }
+}
+
+/** Sube la copia de este dispositivo para un día; si no se confirma, queda pendiente y se reintenta. */
 function pushDay(k) {
+  const seq = ++pendingSeq;
+  pendingDays.set(k, seq);
+  savePending();
+  renderLogSync();
   if (!sync.signedIn) return;
-  sync.pushDay(k, toRemoteMap(dayEntries(k)), days[k] || 0);
+  sync.pushDay(k, toRemoteMap(dayEntries(k)), days[k] || 0).then((ok) => {
+    if (ok && pendingDays.get(k) === seq) {
+      pendingDays.delete(k);
+      savePending();
+      lastSyncAt = Date.now();
+    }
+    renderLogSync();
+  });
+}
+
+let lastFlush = 0;
+function flushPending() {
+  if (!sync.signedIn || Date.now() - lastFlush < 10_000) return;
+  lastFlush = Date.now();
+  for (const k of [...pendingDays.keys()]) pushDay(k);
+}
+
+/** Sube todos los días de este dispositivo y vuelve a leer la nube. */
+function syncNow() {
+  if (!sync.signedIn) return;
+  const keys = new Set([...Object.keys(days).filter((k) => days[k] > 0), ...pendingDays.keys()]);
+  for (const k of keys) pushDay(k);
+  sync.resync();
+  showSnackbar(`${icon('sync')}Sincronizando tus registros…`);
 }
 
 function onRemoteSettings(remote, remoteAt) {
@@ -1405,29 +1490,30 @@ function onRemoteSettings(remote, remoteAt) {
 function onRemoteDays(docs, { initial }) {
   let changed = false;
   const seen = new Set();
+  const toPush = new Set();
   for (const d of docs) {
     const k = d.day;
     seen.add(k);
     const local = dayEntries(k);
-    const res = mergeSessions(local, d.sessions || {});
+    const remote = combineRemote(d);
+    const res = mergeSessions(local, remote);
     if (res.localChanged) {
       for (let i = log.length - 1; i >= 0; i--) if (dayKey(log[i].start) === k) log.splice(i, 1);
       for (const [start, r] of Object.entries(res.merged)) log.push(fromRemote(start, r));
       changed = true;
     }
-    const hasSessions = local.length || Object.keys(d.sessions || {}).length;
+    const hasSessions = local.length || Object.keys(remote).length;
     const target = hasSessions ? res.minutes : Math.max(days[k] || 0, d.minutes || 0);
     if (target !== (days[k] || 0)) {
       days[k] = target;
       changed = true;
     }
-    if (res.remoteNeedsPush) sync.pushDay(k, res.merged, target);
+    if (res.remoteNeedsPush) toPush.add(k);
   }
   if (initial) {
-    // Días que solo existen aquí: se suben
-    for (const k of Object.keys(days)) {
-      if (!seen.has(k) && days[k] > 0) sync.pushDay(k, toRemoteMap(dayEntries(k)), days[k]);
-    }
+    // Días que solo existen aquí, y cambios que no alcanzaron a subir: se suben
+    for (const k of Object.keys(days)) if (!seen.has(k) && days[k] > 0) toPush.add(k);
+    for (const k of pendingDays.keys()) toPush.add(k);
   }
   if (changed) {
     log.sort((a, b) => a.start - b.start);
@@ -1435,11 +1521,69 @@ function onRemoteDays(docs, { initial }) {
     store.saveDays(days);
     renderStats(true);
   }
+  for (const k of toPush) pushDay(k);
   lastSyncAt = Date.now();
   renderSync();
 }
 
+/** Un día se borró en la nube (Borrar historial en otro dispositivo): se borra aquí también. */
+function onRemoteDaysRemoved(keys) {
+  let changed = false;
+  for (const k of keys) {
+    for (let i = log.length - 1; i >= 0; i--) {
+      if (dayKey(log[i].start) === k) {
+        log.splice(i, 1);
+        changed = true;
+      }
+    }
+    if (k in days) {
+      delete days[k];
+      changed = true;
+    }
+    pendingDays.delete(k);
+  }
+  if (!changed) return;
+  savePending();
+  store.saveLog(log);
+  store.saveDays(days);
+  todayWasDone = null;
+  renderStats(true);
+}
+
+/** Aviso bajo la racha: si los registros de este dispositivo se comparten con la cuenta. */
+function renderLogSync() {
+  const box = $('#log-sync');
+  if (!box) return;
+  box.hidden = !syncConfigured;
+  if (!syncConfigured) return;
+  const iconEl = $('#log-sync-icon');
+  const text = $('#log-sync-text');
+  box.classList.remove('warn', 'pending');
+  $('#btn-log-signin').hidden = !!syncUser;
+  $('#btn-sync-now').hidden = !syncUser;
+  if (!syncUser) {
+    box.classList.add('warn');
+    iconEl.textContent = 'cloud_off';
+    setText(text, 'Este dispositivo no está conectado a tu cuenta: sus registros no se comparten con tus otros dispositivos.');
+    return;
+  }
+  const who = syncUser.email || syncUser.displayName || 'tu cuenta';
+  if (pendingDays.size) {
+    box.classList.add('pending');
+    iconEl.textContent = 'cloud_upload';
+    setText(text, `Hay registros de este dispositivo por subir a ${who}. Se suben solos cuando hay conexión.`);
+  } else if (syncState === 'error' && syncDetail) {
+    box.classList.add('warn');
+    iconEl.textContent = 'cloud_off';
+    setText(text, syncDetail);
+  } else {
+    iconEl.textContent = 'cloud_done';
+    setText(text, `Registros sincronizados con ${who}${lastSyncAt ? ` · ${hm(lastSyncAt)}` : ''}.`);
+  }
+}
+
 function renderSync() {
+  renderLogSync();
   const title = $('#sync-title');
   const detail = $('#sync-detail');
   const signIn = $('#btn-signin');
@@ -1484,6 +1628,7 @@ function renderSync() {
 
 const sync = new Sync({
   onStatus: (state, detail) => {
+    if (state === 'synced' && syncState !== 'synced') flushPending();
     syncState = state;
     syncDetail = detail;
     if (state === 'synced') lastSyncAt = Date.now();
@@ -1496,14 +1641,30 @@ const sync = new Sync({
   },
   onRemoteSettings,
   onRemoteDays,
+  onRemoteDaysRemoved,
   onRemotePresence,
-});
+}, { deviceId: DEVICE_ID });
 
 function wireSync() {
   renderSync();
   const signIn = () => sync.signIn();
   $('#btn-signin').addEventListener('click', signIn);
   $('#btn-signout').addEventListener('click', () => sync.signOut());
+  $('#btn-log-signin').addEventListener('click', signIn);
+  $('#btn-sync-now').addEventListener('click', syncNow);
+  // Al volver la conexión, o al regresar a la app tras un rato, se sube lo pendiente y se relee la nube
+  window.addEventListener('online', () => {
+    flushPending();
+    sync.resync();
+  });
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden) {
+      hiddenAt = Date.now();
+      return;
+    }
+    if (hiddenAt && Date.now() - hiddenAt > 2 * MIN) sync.resync();
+    flushPending();
+  });
   $('#btn-account').addEventListener('click', () => {
     if (syncUser) $('#h-sync').scrollIntoView({ behavior: reduceMotion.matches ? 'auto' : 'smooth', block: 'center' });
     else signIn();
@@ -1676,7 +1837,10 @@ function init() {
   startTicker();
   wireSync();
   initInstall({ icon, onInstalled: () => showSnackbar(`${icon('install_mobile')}Listo: ya tienes Música & Enfoque como app.`) });
-  registerServiceWorker();
+  registerServiceWorker(() => {
+    if (!run) location.reload();
+    else showSnackbar(`${icon('sync')}Hay una versión nueva de la app.`, { label: 'Actualizar', fn: () => location.reload() });
+  });
 }
 
 init();

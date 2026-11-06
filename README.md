@@ -81,7 +81,10 @@ En **Ajustes → Sincronización**, o con el ícono de cuenta de la barra superi
 - **El sonido, en un solo dispositivo:** suena donde comenzaste a estar presente. En los demás ves el reloj y se cuenta el tiempo en silencio; con **Sonar aquí** pasas la música y las alarmas a ese dispositivo.
 - **Qué no se sincroniza:** los permisos de notificaciones y de pantalla encendida.
 - **Sin duplicados:** cada sesión se identifica por la hora en que empezó su enfoque. Si el mismo bloque quedó registrado en dos dispositivos, cuenta una vez, con el registro de más minutos.
-- **Sin conexión:** todo se guarda en el navegador y se sube al volver a conectarte.
+- **Ningún dispositivo borra lo de otro:** en la nube cada dispositivo guarda su propia copia de cada día (`devices.{id}`), y al leer se toma la mayor. Un celular que contó menos minutos con la pantalla apagada no puede bajar lo que registró la computadora.
+- **En vivo:** la sesión en curso se guarda cada minuto, así el otro dispositivo ve el avance sin esperar a los :50.
+- **Nada se pierde sin conexión:** lo que no alcanzó a subir queda pendiente (aunque cierres la app) y se sube solo al volver la conexión o al abrir la app. Al regresar a la app después de un rato, se vuelve a leer la nube.
+- **Aviso en "Racha y registro":** muestra si ese dispositivo está conectado a tu cuenta y cuándo se sincronizó por última vez, con el botón **Sincronizar ahora**. Si un dispositivo no ha iniciado sesión, lo dice en rojo.
 
 Proyecto de Firebase: `musica-enfoque`, configurado en `js/firebase-config.js`. Estos datos están hechos para ir en una página web pública. La protección la dan las reglas de Firestore, que solo dejan a cada persona leer y escribir sus propios datos:
 
