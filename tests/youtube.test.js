@@ -1,7 +1,7 @@
 // Pruebas de los enlaces de música. Ejecuta: npm test
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { parseSource, sourceHint } from '../js/youtube.js';
+import { parseSource, sourceHint, explainUnsupported } from '../js/youtube.js';
 
 const V = 'dQw4w9WgXcQ';
 const PL = 'PLx0sYbCqOb8TBPRdmBHs5Iftvv9TPboYG';
@@ -50,4 +50,30 @@ test('avisos para listas que no se pueden incrustar', () => {
   assert.match(sourceHint(parseSource('https://music.youtube.com/playlist?list=LM')), /Me gusta/);
   assert.equal(sourceHint({ type: 'video', id: V }), null);
   assert.equal(sourceHint({ type: 'playlist', id: PL }), null);
+});
+
+test('enlaces reales de YouTube Music: canción, playlist, álbum y playlist oficial', () => {
+  assert.deepEqual(parseSource('https://music.youtube.com/watch?v=jNQXAC9IVRw&si=Qx1'), { type: 'video', id: 'jNQXAC9IVRw' });
+  assert.deepEqual(parseSource('https://music.youtube.com/playlist?list=PLtG4zc89ZUfHYcAFzLT-TGLK-3aUOUhhs&si=zzIRENY_GJ6CU7JT'),
+    { type: 'playlist', id: 'PLtG4zc89ZUfHYcAFzLT-TGLK-3aUOUhhs' });
+  assert.deepEqual(parseSource('https://music.youtube.com/playlist?list=OLAK5uy_kW1P_HY2ALJNQlErMJecmbkbWfz176ln8'),
+    { type: 'playlist', id: 'OLAK5uy_kW1P_HY2ALJNQlErMJecmbkbWfz176ln8' });
+  // Canción abierta desde una playlist oficial de YouTube Music: se usa la playlist
+  assert.deepEqual(parseSource(`https://music.youtube.com/watch?v=${V}&list=RDCLAK5uy_kmPRjHDECIcuVwnKsx2Ng7fyNgFKWNJFs`),
+    { type: 'playlist', id: 'RDCLAK5uy_kmPRjHDECIcuVwnKsx2Ng7fyNgFKWNJFs' });
+  // Radio de una canción (RDAMVM…): se usa la canción
+  assert.deepEqual(parseSource(`https://music.youtube.com/watch?v=${V}&list=RDAMVM${V}`), { type: 'video', id: V });
+});
+
+test('enlace pegado junto con el título', () => {
+  assert.deepEqual(parseSource(`Lluvia para estudiar - Canal https://youtu.be/${V}?si=abc`), { type: 'video', id: V });
+  assert.deepEqual(parseSource(`Escucha esto en YouTube Music: music.youtube.com/playlist?list=${PL}`), { type: 'playlist', id: PL });
+});
+
+test('explica los enlaces que no sirven', () => {
+  assert.equal(parseSource('https://music.youtube.com/browse/MPREb_AbCdEfGhIjK'), null);
+  assert.match(explainUnsupported('https://music.youtube.com/browse/MPREb_AbCdEfGhIjK'), /álbum/);
+  assert.match(explainUnsupported('https://music.youtube.com/channel/UCabcdefghijklmnopqrstuv'), /artista o canal/);
+  assert.match(explainUnsupported('https://www.youtube.com/@canal'), /artista o canal/);
+  assert.match(explainUnsupported('https://open.spotify.com/playlist/123'), /no es de YouTube/);
 });

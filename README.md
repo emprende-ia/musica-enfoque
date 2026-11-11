@@ -144,7 +144,9 @@ Después activa Pages como en el paso 3 y 4.
 
 **Videos sueltos:** `youtube.com/watch?v=…`, `music.youtube.com/watch?v=…`, `youtu.be/…`, `youtube.com/shorts/…`, `youtube.com/live/…` o el ID de 11 caracteres. Cuando el video termina, vuelve a empezar desde el inicio. Con un video no se muestran los botones de anterior/siguiente ni el orden aleatorio.
 
-Si el enlace trae video y playlist (por ejemplo, una canción abierta dentro de una playlist), se usa la playlist. Si la lista es un Mix automático, "Me gusta" o "Ver más tarde", que no se pueden incrustar, se usa el video.
+**YouTube Music:** sirven canciones (`watch?v=`), playlists, álbumes compartidos (`playlist?list=OLAK…`) y playlists oficiales (`list=RDCLAK…`). El enlace de la página de un álbum (`/browse/MPRE…`) o de un artista no sirve; la app te dice qué enlace copiar.
+
+Si el enlace trae video y playlist (por ejemplo, una canción abierta dentro de una playlist), se usa la playlist. Si la lista es un Mix o Radio automático, "Me gusta" o "Ver más tarde", que no se pueden incrustar, se usa el video. Si pegas el enlace junto con el título (algunas apps lo copian así), la app toma solo el enlace.
 
 **Límites de YouTube:**
 

@@ -32,8 +32,9 @@ function loadApi() {
 
 const VIDEO_ID = /^[A-Za-z0-9_-]{11}$/;
 const LIST_ID = /^[A-Za-z0-9_-]{2,}$/;
-// Listas que no se pueden incrustar: privadas de la cuenta o mezclas automáticas
-const PRIVATE_OR_MIX = /^(WL|LM|RD)/;
+// Listas que no se pueden incrustar: privadas de la cuenta o mezclas automáticas (Mix/Radio).
+// Las playlists oficiales de YouTube Music (RDCLAK5uy_…) sí son playlists normales.
+const PRIVATE_OR_MIX = /^(WL|LM|RD(?!CLAK))/;
 
 /**
  * Lee un enlace de YouTube o YouTube Music (o un ID suelto) y dice qué es.
@@ -45,7 +46,7 @@ const PRIVATE_OR_MIX = /^(WL|LM|RD)/;
  * mezcla automática (Me gusta, Ver más tarde, Mix), que no se pueden incrustar: entonces el video.
  */
 export function parseSource(input) {
-  const raw = (input || '').trim();
+  const raw = extractLink(input);
   if (!raw) return null;
   if (!/youtu\.?be|^https?:\/\/|\//i.test(raw)) {
     if (VIDEO_ID.test(raw)) return { type: 'video', id: raw };
@@ -58,13 +59,15 @@ export function parseSource(input) {
     return null;
   }
   const host = u.hostname.replace(/^www\.|^m\./, '');
+  if (!/(^|\.)(youtube\.com|youtu\.be|youtube-nocookie\.com)$/i.test(host)) return null;
   let video = u.searchParams.get('v');
   if (host === 'youtu.be') video = u.pathname.split('/')[1] || null;
   const path = u.pathname.match(/^\/(shorts|live|embed|v)\/([A-Za-z0-9_-]{11})/);
   if (path) video = path[2];
   let list = u.searchParams.get('list');
   if (!list) {
-    const m = u.pathname.match(/\/browse\/([A-Za-z0-9_-]+)/);
+    // music.youtube.com/browse/VL… es una playlist; /browse/MPRE… (página de álbum) no se puede usar
+    const m = u.pathname.match(/\/browse\/VL([A-Za-z0-9_-]+)/);
     if (m) list = m[1];
   }
   if (list) list = stripVL(list);
@@ -73,6 +76,28 @@ export function parseSource(input) {
   if (list && !(video && PRIVATE_OR_MIX.test(list))) return { type: 'playlist', id: list };
   if (video) return { type: 'video', id: video };
   return null;
+}
+
+/** Algunas apps copian el título junto con el enlace: se toma solo el enlace. */
+function extractLink(input) {
+  const text = (input || '').trim();
+  const url = text.match(/https?:\/\/\S+/i) || text.match(/(?:^|\s)((?:www\.|m\.|music\.)?youtu(?:\.be|be\.com)\/\S+)/i);
+  return url ? (url[1] || url[0]) : text;
+}
+
+/** Explica por qué un enlace de YouTube o YouTube Music no sirve, si se reconoce el caso. */
+export function explainUnsupported(input) {
+  const raw = extractLink(input);
+  if (/\/browse\/MPRE/i.test(raw)) {
+    return 'Ese es el enlace de la página de un álbum. En YouTube Music abre el álbum, toca ⋮ → Compartir y pega ese enlace (incluye "list=").';
+  }
+  if (/\/(channel|c|user)\/|\/@[\w.-]+/i.test(raw)) {
+    return 'Ese es el enlace de un artista o canal. Abre una canción, un video o una playlist y comparte ese enlace.';
+  }
+  if (/youtu\.?be/i.test(raw)) {
+    return 'No encontré una playlist ni un video en ese enlace. En YouTube o YouTube Music toca Compartir y copia el enlace.';
+  }
+  return 'Ese enlace no es de YouTube ni de YouTube Music. Pega el enlace de una playlist o de un video.';
 }
 
 function stripVL(id) {
@@ -221,7 +246,7 @@ export class MusicPlayer {
         return;
       }
     }
-    if (tries >= 8) {
+    if (tries >= 14) { // ~10 s: en celular las playlists largas tardan en cargar
       this.hooks.onError?.(this.isVideo
         ? 'No pude leer ese video. Revisa que sea público o no listado.'
         : 'No pude leer esa playlist. Asegúrate de que sea pública o no listada.');

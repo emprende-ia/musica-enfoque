@@ -1,6 +1,6 @@
 import * as S from './schedule.js';
 import { AudioEngine, PRESETS, findPreset } from './audio.js';
-import { MusicPlayer, parseSource, sourceHint } from './youtube.js';
+import { MusicPlayer, parseSource, sourceHint, explainUnsupported } from './youtube.js';
 import { computeStreak, keyOf, dateOf, GOAL_MIN, MAX_SHIELDS } from './streak.js';
 import * as store from './store.js';
 import { Sync, syncConfigured, scheduleIn } from './sync.js';
@@ -190,6 +190,7 @@ function cardHTML(mode) {
 
 const cards = {};
 const players = {};
+window.__mye = { players }; // para diagnóstico desde la consola del navegador
 
 function buildCards() {
   const host = $('#modes');
@@ -303,7 +304,7 @@ async function loadPlaylist(mode, raw, fromUser) {
   }
   const src = parseSource(text);
   if (!src) {
-    plStatus(mode, 'No encontré una playlist ni un video en ese enlace. En YouTube o YouTube Music toca Compartir y copia el enlace.', 'error');
+    plStatus(mode, explainUnsupported(text), 'error');
     return;
   }
   const hint = sourceHint(src);
