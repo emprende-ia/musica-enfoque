@@ -908,6 +908,10 @@ input[type="range"]:focus-visible { outline-offset: 0; border-radius: var(--shap
 
 .player-empty .ms { font-size: 32px; color: var(--card); }
 .mode-card.has-player .player-empty { display: none; }
+/* Un video suelto no tiene canción anterior/siguiente ni orden aleatorio */
+.mode-card.is-video [data-act="prev"],
+.mode-card.is-video [data-act="next"],
+.mode-card.is-video .shuffle-field { display: none; }
 
 .player-mount,
 .player-mount iframe {

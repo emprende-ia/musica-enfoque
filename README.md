@@ -45,7 +45,7 @@ Mientras estás presente, el sonido cambia solo: a los :50 suenan la alarma, la 
 
 - Dial de la hora actual: enfoque y recuperación marcados en el reloj, con el avance en vivo.
 - Las 24 horas del día en una lista, con la hora actual marcada.
-- Una playlist de YouTube Music para enfoque y otra para recuperación. Cada una sigue donde se quedó al volver a su bloque.
+- Música para enfoque y para recuperación: una playlist o cualquier video de YouTube o YouTube Music. Al terminar vuelve a empezar, y cada una sigue donde se quedó al volver a su bloque.
 - Tono binaural y ruido marrón por modo, con varias frecuencias.
 - Alarmas distintas: enfoque (campanas ascendentes), recuperación (descendentes) y recuperación larga (gong).
 - Opción "Solo alarmas" para estar presente sin música ni binaurales.
@@ -134,18 +134,22 @@ git push -u origin main
 
 Después activa Pages como en el paso 3 y 4.
 
-## Cómo copiar el enlace de una playlist de YouTube Music
+## Cómo poner tu música
 
-1. Abre la playlist en YouTube Music (web o app).
+1. Abre la playlist o el video en YouTube o YouTube Music (web o app).
 2. Toca **Compartir → Copiar vínculo**.
 3. Pégalo en la tarjeta de Enfoque o de Recuperación y toca **Cargar**.
 
-Sirven enlaces como `music.youtube.com/playlist?list=…`, `youtube.com/playlist?list=…` o el ID suelto.
+**Playlists:** `music.youtube.com/playlist?list=…`, `youtube.com/playlist?list=…` o el ID suelto. Al terminar la última canción, vuelve a la primera.
+
+**Videos sueltos:** `youtube.com/watch?v=…`, `music.youtube.com/watch?v=…`, `youtu.be/…`, `youtube.com/shorts/…`, `youtube.com/live/…` o el ID de 11 caracteres. Cuando el video termina, vuelve a empezar desde el inicio. Con un video no se muestran los botones de anterior/siguiente ni el orden aleatorio.
+
+Si el enlace trae video y playlist (por ejemplo, una canción abierta dentro de una playlist), se usa la playlist. Si la lista es un Mix automático, "Me gusta" o "Ver más tarde", que no se pueden incrustar, se usa el video.
 
 **Límites de YouTube:**
 
-- La playlist debe ser **pública o no listada**. "Me gusta" y las privadas no se pueden incrustar.
-- Si un video no permite reproducirse fuera de YouTube, la app salta al siguiente.
+- La playlist o el video deben ser **públicos o no listados**. "Me gusta" y las privadas no se pueden incrustar.
+- Si un video de una playlist no permite reproducirse fuera de YouTube, la app salta al siguiente. Si es un video suelto, la app avisa para que pongas otro.
 - La música necesita una cuenta de YouTube normal; los anuncios dependen de tu cuenta y no los controla la app.
 
 ## Para que las alarmas suenen a tiempo
@@ -182,7 +186,7 @@ css/styles.css        Componentes y diseño
 js/schedule.js        Horario: reglas fijas y plan editable de cada día (con pruebas)
 js/streak.js          Rachas y protectores (lógica pura, con pruebas)
 js/audio.js           Binaurales, ruido marrón y alarmas (Web Audio)
-js/youtube.js         Reproductor de playlists (YouTube IFrame API)
+js/youtube.js         Reproductor de playlists y videos en bucle (YouTube IFrame API), con pruebas de enlaces
 js/store.js           Ajustes, presencia, historial y minutos por día
 js/sync.js            Sincronización con Firebase (Google + Firestore)
 js/merge.js           Unión de sesiones entre dispositivos (con pruebas)

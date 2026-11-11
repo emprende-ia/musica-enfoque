@@ -1,6 +1,6 @@
 import * as S from './schedule.js';
 import { AudioEngine, PRESETS, findPreset } from './audio.js';
-import { PlaylistPlayer, parsePlaylistId, playlistHint } from './youtube.js';
+import { MusicPlayer, parseSource, sourceHint } from './youtube.js';
 import { computeStreak, keyOf, dateOf, GOAL_MIN, MAX_SHIELDS } from './streak.js';
 import * as store from './store.js';
 import { Sync, syncConfigured, scheduleIn } from './sync.js';
@@ -153,15 +153,15 @@ function cardHTML(mode) {
     <form class="pl-form" novalidate>
       <div class="pl-row">
         <div class="field">
-          <label for="pl-${mode}">Playlist de YouTube Music</label>
-          <input id="pl-${mode}" name="playlist" type="text" inputmode="url" autocomplete="off" spellcheck="false" placeholder="Enlace de la playlist">
+          <label for="pl-${mode}">Playlist o video de YouTube</label>
+          <input id="pl-${mode}" name="playlist" type="text" inputmode="url" autocomplete="off" spellcheck="false" placeholder="Enlace de la playlist o del video">
         </div>
         <button class="btn tonal" type="submit">Cargar</button>
       </div>
       <p class="pl-status" role="status"></p>
     </form>
     <div class="player-frame">
-      <p class="player-empty">${icon('queue_music')}Sin playlist. En este momento sonarán solo los binaurales, si los activas.</p>
+      <p class="player-empty">${icon('queue_music')}Sin música. Pega una playlist o un video. En este momento sonarán solo los binaurales, si los activas.</p>
       <div class="player-mount"></div>
     </div>
     <div class="transport" hidden>
@@ -171,7 +171,7 @@ function cardHTML(mode) {
       <p class="now-playing" aria-live="polite"></p>
     </div>
     <div class="fields">
-      <label class="switch"><input type="checkbox" role="switch" data-k="shuffle"><span>Orden aleatorio</span></label>
+      <label class="switch shuffle-field"><input type="checkbox" role="switch" data-k="shuffle"><span>Orden aleatorio</span></label>
       <label class="range"><span>Volumen de la música <output data-o="music"></output></span><input type="range" min="0" max="100" step="1" data-k="music"></label>
     </div>
     <fieldset class="binaural">
@@ -197,8 +197,10 @@ function buildCards() {
   for (const mode of MODES) {
     const card = host.querySelector(`[data-mode="${mode}"]`);
     cards[mode] = card;
-    players[mode] = new PlaylistPlayer($('.player-mount', card), {
-      onLoaded: (n) => plStatus(mode, `Playlist lista: ${n} ${n === 1 ? 'canción' : 'canciones'}.`),
+    players[mode] = new MusicPlayer($('.player-mount', card), {
+      onLoaded: (info) => plStatus(mode, info.type === 'video'
+        ? `Video listo${info.title ? `: «${info.title}»` : ''}. Se repite al terminar.`
+        : `Playlist lista: ${info.count} ${info.count === 1 ? 'canción' : 'canciones'}. Se repite al terminar.`),
       onError: (msg) => plStatus(mode, msg, 'error'),
       onTitle: (title) => setText($('.now-playing', card), title),
       onManualPlay: () => {
@@ -294,28 +296,29 @@ async function loadPlaylist(mode, raw, fromUser) {
     s.playlist = '';
     if (fromUser) saveSettings();
     players[mode].unload();
-    card.classList.remove('has-player');
+    card.classList.remove('has-player', 'is-video');
     $('.transport', card).hidden = true;
-    plStatus(mode, fromUser ? 'Playlist quitada.' : '');
+    plStatus(mode, fromUser ? 'Música quitada.' : '');
     return;
   }
-  const id = parsePlaylistId(text);
-  if (!id) {
-    plStatus(mode, 'No encontré una playlist en ese enlace. En YouTube Music abre la playlist, toca Compartir y copia el enlace (incluye “list=”).', 'error');
+  const src = parseSource(text);
+  if (!src) {
+    plStatus(mode, 'No encontré una playlist ni un video en ese enlace. En YouTube o YouTube Music toca Compartir y copia el enlace.', 'error');
     return;
   }
-  const hint = playlistHint(id);
+  const hint = sourceHint(src);
   if (hint) {
     plStatus(mode, hint, 'error');
     return;
   }
   s.playlist = text;
   if (fromUser) saveSettings();
-  plStatus(mode, 'Cargando playlist…');
+  plStatus(mode, src.type === 'video' ? 'Cargando video…' : 'Cargando playlist…');
   card.classList.add('has-player');
+  card.classList.toggle('is-video', src.type === 'video');
   $('.transport', card).hidden = false;
   try {
-    await players[mode].load(id, { shuffle: s.shuffle });
+    await players[mode].load(src, { shuffle: s.shuffle });
     players[mode].setVolume(s.music);
   } catch {
     plStatus(mode, 'No se pudo conectar con YouTube. Revisa tu conexión y vuelve a tocar Cargar.', 'error');
